@@ -50,6 +50,8 @@ source_page_context fornisce gli altri argomenti delle stesse pagine, incluse ta
 necessari agli esercizi. Usali per i calcoli senza aggiungerli ai topic_ids del capitolo
 e senza ripetere i capitoli a cui appartengono. Non dichiarare mancanti dati presenti lì.
 complete=false indica contesto aggiuntivo parziale; non permette di dedurre assenze nelle fonti.
+source_visual_catalog attesta la presenza delle figure anche nelle pagine di altri capitoli.
+Non descrivere come assente o inventato un diagramma elencato nel catalogo.
 Usa paragrafi collegati, definisci ogni simbolo, spiega il significato fisico
 prima e dopo la matematica. Rispetta esattamente i topic_ids del capitolo.
 Per ogni formula: ipotesi, simboli, unità e condizioni di validità. Derivazioni: una trasformazione

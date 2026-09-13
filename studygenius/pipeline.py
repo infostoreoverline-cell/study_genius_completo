@@ -294,6 +294,7 @@ class Pipeline:
                    "course_guide": self.course_guide.model_dump(), "course_outline": self.course_outline,
                    "topics": {t: topics[t] for t in plan.topic_ids},
                    "source_page_context": source_page_context(topics, plan.topic_ids),
+                   "source_visual_catalog": source_visual_catalog(visuals),
                    "visuals": {v: visuals[v] for v in visual_ids}}
         source_images = [self.directory / page_map[p].image for p in sorted({topics[t]["page_id"] for t in plan.topic_ids})]
         feedback = None
