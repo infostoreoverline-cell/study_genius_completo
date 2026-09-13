@@ -70,6 +70,8 @@ def gemini_schema(schema: dict) -> dict:
 
 
 class Models:
+    json_attempts = 3
+
     def __init__(self, settings: Settings, store: Store, job_id: str, check: Callable,
                  transport: httpx.AsyncBaseTransport | None = None):
         self.settings, self.store, self.job_id, self.check = settings, store, job_id, check
@@ -89,6 +91,7 @@ class Models:
             "system": system, "prompt": prompt, "schema": schema.model_json_schema(), "output": max_output,
             "images": [hashlib.sha256(p.read_bytes()).hexdigest() for p in images]}, sort_keys=True)
         cache_path = self.cache / f"{hashlib.sha256(fingerprint.encode()).hexdigest()}.json"
+        pending_path = self.cache / "pending" / cache_path.name
         if cache_path.exists():
             result = schema.model_validate(read_json(cache_path))
             if validate:
@@ -96,12 +99,20 @@ class Models:
             return result
         corrected_prompt = prompt
         output_limit = max_output
-        for correction in range(3):
+        pending_raw = read_json(pending_path).get("raw") if pending_path.exists() else None
+        for correction in range(self.json_attempts):
             self.check()
             try:
-                raw = await self.request(provider, task, system, corrected_prompt, schema.model_json_schema(), images, output_limit)
+                if correction == 0 and pending_raw is not None:
+                    raw = pending_raw
+                else:
+                    raw = await self.request(provider, task, system, corrected_prompt, schema.model_json_schema(), images, output_limit)
+                    # Retain a paid response before validation. A renderer/validator fix
+                    # can revalidate it on resume without another API request. This
+                    # private diagnostic is never treated as a validated cache entry.
+                    atomic_json(pending_path, {"raw": raw})
             except TruncatedOutput:
-                if correction == 2 or output_limit >= 64000:
+                if correction == self.json_attempts - 1 or output_limit >= 64000:
                     raise
                 output_limit = min(output_limit * 2, 64000)
                 self.store.event(self.job_id, f"{task}: risposta troncata; aumento il limite di output a {output_limit} token.")
@@ -111,19 +122,22 @@ class Models:
                 if validate:
                     validate(result)
                 atomic_json(cache_path, result.model_dump(mode="json"))
+                pending_path.unlink(missing_ok=True)
                 self.check()
                 return result
             except (ValueError, ValidationError) as exc:
-                if correction == 2:
-                    raise ModelOutputError(f"{provider}: risposta non valida dopo 3 tentativi ({task}).") from None
                 # ValidationError must not include complete generated content or possible secrets in logs.
                 if isinstance(exc, ValidationError):
                     details = [{"loc": e["loc"], "msg": e["msg"]} for e in exc.errors(include_input=False)]
                 else:
                     details = str(exc)[:1500]
+                atomic_json(pending_path, {"raw": raw, "validation_errors": details})
+                if correction == self.json_attempts - 1:
+                    detail = json.dumps(details, ensure_ascii=False)[:1200]
+                    raise ModelOutputError(f"{provider}: risposta non valida dopo {self.json_attempts} tentativi ({task}). Errori: {detail}") from None
                 corrected_prompt = (prompt + "\nLa risposta precedente non rispettava il contratto. Rigenera tutto. "
                                     + "Errori da correggere: " + json.dumps(details, ensure_ascii=False))
-                self.store.event(self.job_id, f"{task}: correggo la struttura della risposta ({correction + 1}/2).")
+                self.store.event(self.job_id, f"{task}: correggo la struttura della risposta ({correction + 1}/{self.json_attempts - 1}).")
         raise AssertionError("unreachable")
 
     async def request(self, provider, task, system, prompt, schema, images, max_output):

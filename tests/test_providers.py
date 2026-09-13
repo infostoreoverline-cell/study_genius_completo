@@ -7,7 +7,7 @@ import pytest
 from studygenius.config import Settings
 from studygenius.models import Contract, JobOptions
 from studygenius.pipeline import Paused
-from studygenius.providers import Models, ProviderError, gemini_schema
+from studygenius.providers import Models, ModelOutputError, ProviderError, gemini_schema
 from studygenius.storage import BudgetExceeded, Store
 
 
@@ -73,6 +73,25 @@ async def test_bad_json_is_repaired_but_charged(tmp_path):
     try:
         assert (await models.json("deepseek","test","JSON","prompt",Answer)).answer=="ok"
         assert store.usage(job)["calls"]==2
+    finally:
+        await models.close()
+
+
+async def test_paid_response_is_revalidated_after_a_local_validator_fix(tmp_path):
+    store,job,models=setup(tmp_path,lambda request:response())
+    models.json_attempts=1
+    def unsupported_notation(result):
+        raise ValueError("Notazione non ancora supportata dal renderer")
+    try:
+        with pytest.raises(ModelOutputError,match="Notazione non ancora supportata"):
+            await models.json("deepseek","test","JSON","prompt",Answer,validate=unsupported_notation)
+        assert store.usage(job)["calls"]==1
+        pending=list((store.directory(job)/"cache/pending").glob("*.json"))
+        assert len(pending)==1 and "validation_errors" in json.loads(pending[0].read_text())
+        assert not list((store.directory(job)/"cache").glob("*.json"))
+        result=await models.json("deepseek","test","JSON","prompt",Answer,validate=lambda r:None)
+        assert result.answer=="ok" and store.usage(job)["calls"]==1
+        assert not pending[0].exists()
     finally:
         await models.close()
 
