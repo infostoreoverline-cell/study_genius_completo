@@ -1,0 +1,181 @@
+{
+  "mode": "live",
+  "issues": [
+    "Capitolo 1: La fonte non fornisce incertezze numeriche: i valori della tabella sono arrotondati a diverse cifre decimali, quindi i prodotti $pV$ possono presentare piccole discrepanze di arrotondamento.",
+    "Capitolo 1: La fonte non specifica un intervallo quantitativo di validità del modello ideale; per gas reali ad alta pressione o bassa temperatura si possono osservare deviazioni non discusse qui.",
+    "Capitolo 1: Il grafico originale presenta una curva continua, mentre la tabella contiene solo sei punti discreti; eventuali valori intermedi derivano dal modello e non sono dati osservati.",
+    "Capitolo 2: Le fonti non assegnano punteggi numerici ai singoli quesiti dell'esercizio; i requested_points sono stati formulati come obiettivi corrispondenti ai tre quesiti richiesti.",
+    "Capitolo 2: Non risultano ambiguità concettuali rilevanti nelle fonti; l'unica attenzione è la conversione tra kPa e L e le unità di energia, esplicitata tramite $1\\,\\mathrm{kPa\\,L}=1\\,\\mathrm{J}$."
+  ],
+  "coverage": {
+    "pages_total": 2,
+    "pages_analyzed": 2,
+    "topics_total": 3,
+    "topics_in_lessons": 3,
+    "visuals_total": 1,
+    "visuals_explained": 1
+  },
+  "excluded_pages": [],
+  "topic_map": {
+    "D001-P0001-T01": {
+      "page_id": "D001-P0001",
+      "title": "Modello del gas ideale e legge di stato",
+      "chapter": 1
+    },
+    "D001-P0002-T01": {
+      "page_id": "D001-P0002",
+      "title": "Lavoro termodinamico e primo principio della termodinamica",
+      "chapter": 2
+    },
+    "D001-P0002-T02": {
+      "page_id": "D001-P0002",
+      "title": "Esercizio: Espansione isoterma reversibile di un gas ideale",
+      "chapter": 2
+    }
+  },
+  "chapter_reviews": [
+    {
+      "passed": true,
+      "coverage": 98,
+      "correctness": 98,
+      "clarity": 96,
+      "issues": []
+    },
+    {
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 100,
+      "issues": []
+    }
+  ],
+  "curriculum_reviews": [
+    {
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 100,
+      "issues": []
+    }
+  ],
+  "scope": "Copertura degli argomenti identificati dai modelli; non prova di assenza di omissioni semantiche.",
+  "course_guide": {
+    "conventions": [
+      "Convenzione sui segni termodinamici: adottata la convenzione chimica/IUPAC, in cui il lavoro ricevuto dal sistema è positivo ($w > 0$) e il lavoro elementare è $\\delta w = -p_{\\text{ext}} dV$ (page_id: D001-P0002).",
+      "Primo principio della termodinamica espresso nella forma $\\Delta U = q + w$ (page_id: D001-P0002).",
+      "Gas ideale: si trascurano interazioni intermolecolari e volume proprio delle particelle; l'energia interna dipende unicamente dalla temperatura, quindi in condizioni isoterme $\\Delta U = 0$ e $q = -w$ (page_id: D001-P0001, D001-P0002).",
+      "Condizione di reversibilità meccanica: la pressione esterna coincide con la pressione del gas ($p_{\\text{ext}} = p$); il modulo del lavoro reversibile corrisponde all'area sottesa alla curva nel piano $p(V)$ (page_id: D001-P0001, D001-P0002)."
+    ],
+    "symbols": [
+      "$p$: pressione del gas, espressa in $\\text{kPa}$ (page_id: D001-P0001, D001-P0002)",
+      "$p_{\\text{ext}}$: pressione esterna agente sul sistema (page_id: D001-P0002)",
+      "$V$: volume del sistema, espresso in $\\text{L}$ (page_id: D001-P0001, D001-P0002)",
+      "$V_i, V_f$: volume iniziale e volume finale nella trasformazione (page_id: D001-P0002)",
+      "$n$: quantità di sostanza, espressa in $\\text{mol}$ (page_id: D001-P0001, D001-P0002)",
+      "$T$: temperatura assoluta, espressa in $\\text{K}$ (page_id: D001-P0001, D001-P0002)",
+      "$R$: costante universale dei gas, con valore $8.314\\text{ J}/(\\text{mol}\\cdot\\text{K})$ o $\\text{J mol}^{-1}\\text{ K}^{-1}$ (page_id: D001-P0001, D001-P0002)",
+      "$w$: lavoro termodinamico scambiato dal sistema (page_id: D001-P0002)",
+      "$\\delta w$: lavoro elementare (page_id: D001-P0002)",
+      "$q$: calore scambiato dal sistema (page_id: D001-P0002)",
+      "$\\Delta U$: variazione di energia interna (page_id: D001-P0002)"
+    ],
+    "conflicts": []
+  },
+  "layout": {
+    "engine": "xelatex",
+    "overfull_boxes": [],
+    "missing_characters": [],
+    "pages": 20,
+    "empty_pages": []
+  },
+  "layout_reviews": [
+    {
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 100,
+      "issues": []
+    },
+    {
+      "passed": true,
+      "coverage": 95,
+      "correctness": 92,
+      "clarity": 90,
+      "issues": [
+        {
+          "severity": "minor",
+          "target": "pagina-0005, riquadro formule R",
+          "message": "Nelle formule matematiche le unità di misura e i valori numerici non sono spaziati e risultano in corsivo matematico continuo (es. '8.314Jmol^{-1}K^{-1}').",
+          "correction": "Utilizzare una corretta formattazione per le unità di misura (ad es. con comando mathrm/text e spaziature adeguate: 8.314 \\text{ J mol}^{-1}\\text{K}^{-1})."
+        },
+        {
+          "severity": "minor",
+          "target": "pagina-0006, calcolo della costante k",
+          "message": "La formula visualizzata 'k = 1mol * 8.314kPaLmol^{-1}K^{-1} * 300K = 2494.2kPaL' presenta lettere unite e corsive per le unità di misura e usa l'asterisco invece del punto di moltiplicazione.",
+          "correction": "Separare le unità dai numeri con spazio sottile o operatore di moltiplicazione esplicito (\\cdot) e impostare le unità in carattere dritto."
+        },
+        {
+          "severity": "minor",
+          "target": "pagina-0008, formula nRT",
+          "message": "La formula in fondo alla pagina presenta unità non spaziate ('0.50mol * 8.314kPaL...').",
+          "correction": "Inserire spaziatura tra quantità e unità di misura e convertire le unità in font tondo."
+        }
+      ]
+    },
+    {
+      "passed": true,
+      "coverage": 100,
+      "correctness": 95,
+      "clarity": 95,
+      "issues": [
+        {
+          "severity": "minor",
+          "target": "pagina-0009",
+          "message": "Nelle equazioni in display math le unità di misura e gli operatori sono compattati senza spaziature (es. 1247.1kPaL/5.0L e l'uso dell'asterisco * invece di \\cdot).",
+          "correction": "Utilizzare comandi come \\mathrm{} o \\text{} con adeguate spaziature e sostituire gli asterischi con \\cdot per una resa tipografica ottimale delle unità di misura."
+        },
+        {
+          "severity": "minor",
+          "target": "pagina-0011 e pagina-0012",
+          "message": "I titoli di capitolo e sezione presentano sillabazione a fine riga ('espan-sione', 'ide-ale').",
+          "correction": "Inserire un'interruzione di riga manuale o riformulare leggermente il titolo per evitare la sillabazione nei titoli principali."
+        }
+      ]
+    },
+    {
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 100,
+      "issues": []
+    },
+    {
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 100,
+      "issues": []
+    }
+  ],
+  "layout_review_scope": "Tutte le pagine della versione sottoposta al revisore visivo.",
+  "usage": {
+    "calls": 34,
+    "input_tokens": 138794,
+    "output_tokens": 94454,
+    "total_tokens": 233248,
+    "uncertain_calls": 3
+  },
+  "options": {
+    "title": "Chimica fisica - Collaudo reale Gemini e DeepSeek",
+    "exam_brief": "Gas ideale, equazione di stato, isoterma nel piano p-V, lavoro reversibile isotermo e primo principio. Esercizi scritti con passaggi matematici completi.",
+    "mode": "live",
+    "review_rounds": 2,
+    "max_api_calls": 45,
+    "max_total_tokens": 300000,
+    "pages_per_batch": 2
+  },
+  "models": {
+    "reader_reviewer": "gemini-3.8-flash",
+    "planner_author": "deepseek-v4-pro"
+  }
+}

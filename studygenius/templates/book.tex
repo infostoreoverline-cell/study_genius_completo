@@ -1,0 +1,45 @@
+\documentclass[11pt,a4paper,oneside]{report}
+\usepackage{fontspec}
+\IfFontExistsTF{TeX Gyre Pagella}{\setmainfont{TeX Gyre Pagella}}{\setmainfont{Latin Modern Roman}}
+\IfFontExistsTF{TeX Gyre Heros}{\setsansfont{TeX Gyre Heros}}{\setsansfont{Latin Modern Sans}}
+\setmonofont{Latin Modern Mono}
+\usepackage[provide=*,italian]{babel}
+\usepackage[margin=23mm,headheight=16pt]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{graphicx,adjustbox}
+\usepackage[table]{xcolor}
+\usepackage[most]{tcolorbox}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{microtype}
+\usepackage{needspace}
+\usepackage{hyperref}
+\definecolor{accent}{HTML}{167A80}
+\definecolor{ink}{HTML}{192B34}
+\definecolor{muted}{HTML}{5F6C70}
+\definecolor{light}{HTML}{F0F6F4}
+\definecolor{rust}{HTML}{A95134}
+\definecolor{warm}{HTML}{FFF4E8}
+\color{ink}
+\hypersetup{colorlinks=true,linkcolor=accent,urlcolor=accent,unicode=true,pdftitle={StudyGenius - Dispensa}}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\sffamily\small\color{accent}STUDYGENIUS}
+\fancyhead[R]{\sffamily\small Dispensa di studio}
+\fancyfoot[R]{\sffamily\small\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+\titleformat{\chapter}[display]{\sffamily\bfseries\color{ink}}{\color{accent}\large\chaptertitlename\ \thechapter}{6pt}{\huge}
+\titlespacing*{\chapter}{0pt}{-8pt}{24pt}
+\titleformat{\section}{\sffamily\Large\bfseries\color{accent}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\sffamily\large\bfseries}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}[runin]{\bfseries}{}{0pt}{}[.]
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt plus 2pt}
+\setlength{\emergencystretch}{3em}
+\setlist{leftmargin=*,itemsep=4pt,topsep=5pt}
+\tcbset{arc=2mm,boxrule=0.5pt,left=3mm,right=3mm,top=2mm,bottom=2mm}
+\raggedbottom
+\begin{document}
+%%CONTENT%%
+\end{document}

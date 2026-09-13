@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#173b39">
+  <title>StudyGenius · Il tuo spazio di studio</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="StudyGenius, pagina iniziale"><span class="brand-mark">sg<span>•</span></span><span>StudyGenius<small>FROM SOURCES TO UNDERSTANDING</small></span></a>
+    <div class="workspace-label">IL TUO SPAZIO</div>
+    <button class="nav-item active" id="new-project"><span>+</span> Nuova dispensa</button>
+    <button class="nav-item" id="open-settings"><span>⚙</span> Modelli e chiavi API</button>
+    <div class="mobile-projects"><button id="mobile-new" class="button secondary">+ Nuova dispensa</button><select id="mobile-history" aria-label="Progetti recenti"><option value="">Progetti recenti</option></select></div>
+    <div class="workspace-label history-label">PROGETTI RECENTI</div>
+    <div id="history" class="history"><p class="muted small">Il tuo prossimo esame comincia qui.</p></div>
+    <div class="sidebar-bottom"><span class="status-dot"></span> Applicazione sul tuo PC<small>Le elaborazioni IA usano le API dei modelli scelti.</small></div>
+  </aside>
+
+  <main>
+    <header class="topbar"><span>Il tuo spazio di studio <span class="slash">/</span> <strong id="breadcrumb">Nuova dispensa</strong></span><span class="edition">LOCAL EDITION <span class="status-dot"></span></span></header>
+    <div class="page">
+      <section id="welcome">
+        <div class="eyebrow"><span class="short-line"></span> STUDIA PER CAPIRE. NON SOLO PER RICORDARE.</div>
+        <h1>Dai tuoi PDF,<br>a una comprensione <em>profonda.</em></h1>
+        <p class="lead">Unisci le fonti del tuo corso. Trasformale in una dispensa ragionata,<br class="desktop"> con formule spiegate, figure commentate ed esercizi passo passo.</p>
+        <div class="feature-strip"><span><b>01</b> Tutte le fonti, insieme</span><span><b>02</b> Due modelli, più controlli</span><span><b>03</b> Un PDF da studiare</span></div>
+      </section>
+
+      <div id="system-notice" class="notice" hidden></div>
+      <section id="create-view" class="create-grid">
+        <form id="project-form" class="card input-card">
+          <div class="card-heading"><div><span class="eyebrow">IL PUNTO DI PARTENZA</span><h2>La tua prossima dispensa</h2></div><span class="step-label">1 / 2</span></div>
+          <label for="title">Come si chiama il corso?</label>
+          <input id="title" name="title" placeholder="Es. Chimica fisica 1" maxlength="160" required>
+          <label for="files" class="dropzone" id="dropzone" tabindex="0">
+            <span class="upload-icon" aria-hidden="true">↥</span>
+            <strong>Trascina qui tutti i PDF</strong>
+            <span>oppure <u>scegli i file dal tuo computer</u></span>
+            <small>Slide, appunti, dispense e prove d’esame · fino a 30 file</small>
+          </label>
+          <input id="files" type="file" accept=".pdf,application/pdf" multiple class="visually-hidden">
+          <ul id="file-list" class="file-list" aria-live="polite"></ul>
+          <div class="label-row"><label for="exam-brief">Programma e indicazioni per l’esame</label><span>CONSIGLIATO</span></div>
+          <textarea id="exam-brief" rows="4" maxlength="12000" placeholder="Incolla il programma ufficiale, gli argomenti richiesti e il tipo di prova. Es.: scritto con esercizi e orale; spiegare tutti i passaggi di calcolo."></textarea>
+          <p class="field-help">Serve a individuare ciò che manca nelle fonti rispetto a ciò che ti verrà chiesto.</p>
+          <details class="advanced"><summary>Profondità e limiti di utilizzo</summary>
+            <div class="fields-row"><div><label for="rounds">Cicli di correzione</label><select id="rounds"><option value="1">1 · Essenziale</option><option value="2" selected>2 · Approfondito</option><option value="3">3 · Esteso</option><option value="4">4 · Massimo</option></select></div><div><label for="batch-pages">Pagine per lettura</label><select id="batch-pages"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select></div></div>
+            <div class="fields-row"><div><label for="max-calls">Massimo chiamate API</label><input id="max-calls" type="number" min="1" max="10000" value="300" required></div><div><label for="max-tokens">Soglia token complessivi</label><input id="max-tokens" type="number" min="1000" max="100000000" value="2000000" required></div></div>
+            <p class="field-help">Ogni tentativo conta nel limite di chiamate. I token vengono verificati tra le chiamate: l’ultima può superare la soglia. I prezzi dipendono dal provider; questi limiti non sono un preventivo in euro.</p>
+          </details>
+          <div class="form-footer"><span><span class="lock-icon">◇</span> Chiavi e documenti fuori da Git</span><button type="submit" class="button primary" id="create-button">Crea la mia dispensa <span>↗</span></button></div>
+          <p class="privacy-note">Avviando il lavoro, le pagine vengono inviate a Gemini; il contenuto estratto viene inviato anche a DeepSeek per la stesura. I file e i progressi restano sul tuo PC.</p>
+        </form>
+
+        <aside class="process-column">
+          <div class="process-card"><span class="eyebrow">UN METODO, NON UN RIASSUNTO</span><h2>Ogni passaggio<br>ha uno scopo.</h2>
+            <ol class="process-list">
+              <li><span class="process-number">01</span><div><h3>Leggere davvero le fonti</h3><p>Testo, formule, grafici e scansioni. Ogni pagina entra nella mappa degli argomenti.</p><span class="role">GEMINI · LETTURA VISIVA</span></div></li>
+              <li><span class="process-number">02</span><div><h3>Costruire la comprensione</h3><p>Concetti collegati, simboli definiti, calcoli motivati. Ogni esercizio segue i punti della consegna.</p><span class="role">DEEPSEEK · STESURA</span></div></li>
+              <li><span class="process-number">03</span><div><h3>Rileggere, correggere, verificare</h3><p>Revisione scientifica, confronto con le fonti e controllo visivo del PDF renderizzato.</p><span class="role">GEMINI + DEEPSEEK · REVISIONE</span></div></li>
+              <li><span class="process-number">04</span><div><h3>Portare tutto allo studio</h3><p>PDF in LaTeX, figure commentate, richiamo attivo e rapporto dei punti da verificare.</p><span class="role">IL TUO PC · COMPOSIZIONE</span></div></li>
+            </ol>
+          </div>
+          <div class="demo-card"><span class="demo-symbol">∫</span><div><h3>Prima, guarda come viene.</h3><p>Una demo di chimica fisica, senza chiavi e senza consumo API.</p><button class="text-button" id="demo-button">Genera la demo <span>→</span></button></div></div>
+        </aside>
+      </section>
+
+      <section id="job-view" hidden>
+        <div class="job-title-row"><div><span class="eyebrow" id="job-mode">LA TUA DISPENSA</span><h1 id="job-title" class="job-title"></h1></div><span class="status-pill" id="job-status"></span></div>
+        <div class="job-grid"><div>
+          <div class="card progress-card"><div class="progress-heading"><h2 id="job-stage">Preparazione</h2><strong id="job-percent">0%</strong></div><progress id="job-progress" max="1" value="0"></progress><p id="job-error" class="error-text" hidden></p><div class="job-actions"><button id="resume-button" class="button primary">Avvia / Riprendi →</button><button id="pause-button" class="button secondary" hidden>Metti in pausa</button></div><p class="field-help">Puoi chiudere l’applicazione e riprendere dai passaggi completati. Una chiamata interrotta potrebbe essere già stata addebitata dal provider.</p></div>
+          <div id="result-card" class="card result-card" hidden><span class="eyebrow">PRONTA DA APRIRE</span><h2>La tua dispensa è qui.</h2><p id="result-description"></p><div class="download-row"><a class="button primary" id="pdf-link" target="_blank" rel="noopener">Apri il PDF ↗</a><a class="button secondary" id="source-link">Sorgenti LaTeX ↓</a><a class="text-button" id="report-link">Rapporto qualità ↓</a></div><div id="coverage" class="coverage"></div><details id="quality-details"><summary>Punti da verificare e ambito dei controlli</summary><p class="field-help">La copertura misura gli argomenti identificati nella lettura automatica. Non dimostra che nessun concetto sia stato omesso.</p><ul id="quality-issues"></ul></details></div>
+          <div class="card outline-card"><h2>Il percorso di studio</h2><div id="outline"><p class="muted">L’indice compare dopo la lettura delle fonti.</p></div></div>
+        </div><div>
+          <div class="card usage-card"><span class="eyebrow">UTILIZZO DI QUESTO PROGETTO</span><div class="metric"><strong id="usage-calls">0</strong><span>chiamate API</span></div><div class="metric"><strong id="usage-tokens">0</strong><span>token registrati</span></div><p id="usage-note" class="field-help"></p><details><summary>Modifica i limiti</summary><label for="job-max-calls">Massimo chiamate</label><input id="job-max-calls" type="number" min="1" max="10000"><label for="job-max-tokens">Soglia token</label><input id="job-max-tokens" type="number" min="1000" max="100000000"><button id="save-limits" class="button secondary">Salva i limiti</button></details></div>
+          <div class="card event-card"><h3>Diario del lavoro</h3><ol id="events" aria-live="polite"></ol></div>
+        </div></div>
+      </section>
+      <footer class="page-footer"><span>StudyGenius <b>•</b> Comprendere, un passo alla volta.</span><span>Le verifiche automatiche accompagnano lo studio; non certificano l’esito dell’esame.</span></footer>
+    </div>
+  </main>
+
+  <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><div><span class="eyebrow">IL TUO TEAM DI MODELLI</span><h2>Modelli e chiavi API</h2></div><button type="button" id="close-settings" class="icon-button" aria-label="Chiudi">×</button></div><p class="muted">Le chiavi servono per chiamare i tuoi account. Non vengono incluse nei PDF, nei sorgenti scaricabili o nella repository.</p>
+    <label for="gemini-key">Chiave Gemini <span id="gemini-status" class="key-status"></span></label><input id="gemini-key" type="password" autocomplete="off" placeholder="Inserisci la tua chiave API"><label for="gemini-model">Modello Gemini · lettura e revisione</label><input id="gemini-model" list="gemini-models" required maxlength="100"><datalist id="gemini-models"></datalist>
+    <label for="deepseek-key">Chiave DeepSeek <span id="deepseek-status" class="key-status"></span></label><input id="deepseek-key" type="password" autocomplete="off" placeholder="Inserisci la tua chiave API"><label for="deepseek-model">Modello DeepSeek · indice e stesura</label><input id="deepseek-model" list="deepseek-models" required maxlength="100"><datalist id="deepseek-models"></datalist>
+    <label class="check-label"><input id="remember-keys" type="checkbox">Ricorda le chiavi su questo PC</label><p class="field-help">Se selezionato, vengono salvate in un file locale privato in chiaro, escluso da Git. Altrimenti restano in memoria fino alla chiusura. I campi lasciati vuoti conservano le chiavi della sessione.</p>
+    <p id="connection-result" class="connection-result" role="status"></p><div class="dialog-actions"><button class="button secondary" type="button" id="check-connections">Salva e verifica accesso</button><button class="button primary" type="submit">Salva impostazioni</button></div><button type="button" class="text-button danger" id="clear-keys">Dimentica le chiavi salvate e quelle della sessione</button><p class="field-help">Le eventuali chiavi in un file .env vanno rimosse anche da quel file.</p>
+  </form></dialog>
+  <div class="toast" id="toast" role="alert" hidden></div>
+</body>
+</html>

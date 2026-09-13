@@ -1,0 +1,32 @@
+name: Test e compilazione PDF
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Installa LaTeX
+        run: sudo apt-get update && sudo apt-get install -y texlive-xetex texlive-latex-extra texlive-fonts-recommended texlive-lang-italian fonts-texgyre
+      - name: Installa dipendenze
+        run: python -m pip install -r requirements.txt -e '.[test]'
+      - name: Verifica credenziali e contratti
+        run: python scripts/check_secrets.py
+      - name: Test inclusa pipeline con PDF reale e API simulate
+        run: python -m pytest -q
+      - name: Genera demo senza crediti
+        run: python -m studygenius demo
+      - name: Conserva il PDF di collaudo
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-studygenius
+          path: .studygenius/jobs/*/output/dispensa.pdf
+          include-hidden-files: true

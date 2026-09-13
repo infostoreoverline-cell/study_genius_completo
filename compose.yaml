@@ -1,0 +1,10 @@
+services:
+  studygenius:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - studygenius-data:/data
+    restart: unless-stopped
+volumes:
+  studygenius-data:
