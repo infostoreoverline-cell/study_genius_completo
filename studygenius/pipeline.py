@@ -47,6 +47,15 @@ def validate_lesson(lesson: Lesson, topic_ids: list[str], visual_ids: list[str])
     validate_lesson_math(lesson)
 
 
+def validate_chapter_lesson(lesson: Lesson, topic_ids, visual_ids, known_visual_ids):
+    # Other known figures already have an owner in the course plan. Ignore those
+    # extra explanations instead of regenerating an otherwise valid chapter.
+    # Missing assigned figures, duplicates and unknown IDs still fail below.
+    assigned, known = set(visual_ids), set(known_visual_ids)
+    lesson.visuals = [v for v in lesson.visuals if v.visual_id in assigned or v.visual_id not in known]
+    validate_lesson(lesson, topic_ids, visual_ids)
+
+
 def bounded_groups(items, max_items, max_chars, key=lambda x: x):
     group, size = [], 0
     for item in items:
@@ -306,7 +315,7 @@ class Pipeline:
                 content += "\nCorreggi questa versione precedente conservando tutto ciò che è corretto:\n"
                 content += last_lesson.model_dump_json() + "\nProblemi da risolvere:\n" + json.dumps(feedback, ensure_ascii=False)
             lesson = await self.models.json("deepseek", f"Capitolo {index+1}, stesura {attempt+1}", prompts.WRITE,
-                content, Lesson, validate=lambda r: validate_lesson(r, plan.topic_ids, visual_ids), max_output=32000)
+                content, Lesson, validate=lambda r: validate_chapter_lesson(r, plan.topic_ids, visual_ids, visuals), max_output=32000)
             last_lesson = lesson
             atomic_json(folder / f"draft-{attempt}.json", lesson.model_dump())
             self.progress(f"Capitolo {index+1} · verifica formule e grafici ({attempt+1})", 0.34 + 0.46*index/max(1, len(read_json(self.directory / "outline.json"))))

@@ -53,6 +53,23 @@ def test_numerical_charts_and_crops_reject_invalid_data():
         SourceVisual(title="Bad", description="A meaningful description", bbox=[100,0,50,1000])
 
 
+def test_known_figures_from_other_chapters_do_not_invalidate_the_lesson():
+    from studygenius.pipeline import validate_chapter_lesson
+    plan, lesson = demo_content()
+    assigned = "D001-P0001-V01"
+    other = "D001-P0002-V01"
+    lesson.visuals.append(lesson.visuals[0].model_copy(update={"visual_id": other}))
+    validate_chapter_lesson(lesson, plan.topic_ids, [assigned], [assigned, other])
+    assert [v.visual_id for v in lesson.visuals] == [assigned]
+    with pytest.raises(ValueError):
+        validate_chapter_lesson(lesson, plan.topic_ids, [assigned, other], [assigned, other])
+    for extra in [assigned, "D002-P0001-V01"]:
+        bad = lesson.model_copy(deep=True)
+        bad.visuals.append(bad.visuals[0].model_copy(update={"visual_id": extra}))
+        with pytest.raises(ValueError):
+            validate_chapter_lesson(bad, plan.topic_ids, [assigned], [assigned, other])
+
+
 def test_context_grouping_never_discards_items():
     groups = list(bounded_groups(list(range(20)), 3, 100))
     assert [x for group in groups for x in group] == list(range(20))
