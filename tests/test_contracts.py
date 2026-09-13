@@ -81,3 +81,13 @@ def test_bare_scientific_notation_in_prose_is_typeset_safely():
     assert r"\textbackslash{}input" in rich(r"Non eseguire \input{private-settings.json}")
     assert "1)" not in bullets(["1) Calcolare", "2. Rispondere"], True)
     assert "1.00" in bullets(["1.00 mol di gas"], True)
+
+
+def test_unicode_symbols_and_greek_exponents_are_typeset_safely():
+    value = rich(r"Il rendimento η vale $η=0.5$; pV^γ, pV^\gamma, ∫ p dV, V_10 e ΔU=0 ⇒ q=-w.")
+    assert all(c not in value for c in "ηγ∫⇒")
+    assert r"\(\eta \)" in value and r"\eta =0.5" in value
+    assert r"\(pV^\gamma \)" in value and r"\(V_{10}\)" in value
+    assert r"\(pV^\)" not in value
+    assert r"\(pV^\)" not in rich("Espressione incompleta pV^")
+    assert r"\textbackslash{}input" in rich(r"η: \input{private-settings.json}")

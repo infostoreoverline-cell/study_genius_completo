@@ -37,12 +37,13 @@ qquad colon mid nonumber notag
 """.split()) - {"hspace", "phantom", "ce", "SI", "si", "mathscr", "numberwithin", "cancel"}
 MATH_ENVS = {"aligned", "gathered", "cases", "matrix", "pmatrix", "bmatrix", "vmatrix", "Vmatrix", "smallmatrix"}
 UNICODE_MATH = {"α": r"\alpha ", "β": r"\beta ", "γ": r"\gamma ", "δ": r"\delta ",
-    "Δ": r"\Delta ", "ε": r"\varepsilon ", "θ": r"\theta ", "λ": r"\lambda ",
+    "Δ": r"\Delta ", "ε": r"\varepsilon ", "η": r"\eta ", "θ": r"\theta ", "λ": r"\lambda ",
     "μ": r"\mu ", "π": r"\pi ", "ρ": r"\rho ", "σ": r"\sigma ", "τ": r"\tau ",
     "φ": r"\phi ", "ω": r"\omega ", "Ω": r"\Omega ", "∞": r"\infty ",
     "∂": r"\partial ", "∇": r"\nabla ", "∫": r"\int ", "≤": r"\leq ",
     "≥": r"\geq ", "≠": r"\neq ", "≈": r"\approx ", "×": r"\times ",
-    "·": r"\cdot ", "−": "-", "→": r"\to ", "°": r"^{\circ}"}
+    "·": r"\cdot ", "−": "-", "→": r"\to ", "⇒": r"\Rightarrow ",
+    "⇐": r"\Leftarrow ", "⇔": r"\Leftrightarrow ", "∮": r"\oint ", "°": r"^{\circ}"}
 
 
 def safe_math(value: str) -> str:
@@ -116,7 +117,8 @@ def prose(value: str) -> str:
     Handles model output such as 'Delta U', V_i and m^3 outside $...$. Only
     whitelisted TeX commands/short subscripted or exponentiated symbols qualify.
     """
-    start = re.compile(r"\\{1,2}[A-Za-z]+|\b[A-Za-z]{1,3}(?=[_^])|\b\d{1,3}(?=\^)")
+    unicode_symbols = re.escape("".join(UNICODE_MATH))
+    start = re.compile(r"\\{1,2}[A-Za-z]+|\b[A-Za-z]{1,3}(?=[_^])|\b\d{1,3}(?=\^)|[" + unicode_symbols + "]")
     result, last, position = [], 0, 0
     while match := start.search(value, position):
         token = match.group()
@@ -127,12 +129,18 @@ def prose(value: str) -> str:
         # Consume balanced arguments and indices, including nested \text{...}.
         while end < len(value):
             if value[end] in "_^":
+                operator_position = end
                 end += 1
                 if end < len(value) and value[end] != "{":
-                    suffix = re.match(r"-?\d+|[A-Za-z0-9]+", value[end:])
+                    suffix = re.match(r"-?\d+|[A-Za-z0-9]+|\\{1,2}[A-Za-z]+|[" + unicode_symbols + "]", value[end:])
                     if suffix:
                         end += len(suffix.group())
                         continue
+                    end = operator_position
+                    break
+                if end == len(value):
+                    end = operator_position
+                    break
             if end < len(value) and value[end] == "{":
                 depth, cursor = 1, end + 1
                 while cursor < len(value) and depth:
@@ -151,7 +159,7 @@ def prose(value: str) -> str:
                 end += len(tail.group())
         candidate = value[match.start():end]
         # Bare alphabetic multi-letter indices (p_ext) denote a label, not e*x*t.
-        candidate = re.sub(r"_([A-Za-z]{2,})(?![A-Za-z])", r"_{\1}", candidate)
+        candidate = re.sub(r"([_^])([A-Za-z]{2,}|\d{2,})(?![A-Za-z0-9])", r"\1{\2}", candidate)
         candidate = re.sub(r"\^(-\d+)", r"^{\1}", candidate)
         try:
             math = safe_math(candidate)

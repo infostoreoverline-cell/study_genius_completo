@@ -46,6 +46,10 @@ non la richiesta di ripetere l'intero corso in ogni capitolo. Mantieni il titolo
 Non anticipare sezioni ed esercizi assegnati ad altri capitoli del course_outline.
 Rispetta le convenzioni e la notazione del course_guide. Se le fonti usano convenzioni
 diverse, esplicita la conversione, senza cambiare silenziosamente il segno del lavoro.
+source_page_context fornisce gli altri argomenti delle stesse pagine, incluse tabelle e dati
+necessari agli esercizi. Usali per i calcoli senza aggiungerli ai topic_ids del capitolo
+e senza ripetere i capitoli a cui appartengono. Non dichiarare mancanti dati presenti lì.
+complete=false indica contesto aggiuntivo parziale; non permette di dedurre assenze nelle fonti.
 Usa paragrafi collegati, definisci ogni simbolo, spiega il significato fisico
 prima e dopo la matematica. Rispetta esattamente i topic_ids del capitolo.
 Per ogni formula: ipotesi, simboli, unità e condizioni di validità. Derivazioni: una trasformazione
@@ -56,11 +60,18 @@ aligned, cases, matrix, pmatrix, bmatrix; non usare ambienti equation o pacchett
 Ogni section ha topic_ids pertinenti: coprili TUTTI. Riporta e risolvi OGNI esercizio delle
 fonti assegnate, con la consegna integrale e requested_points. Ogni step.label deve indicare
 il punto che sta risolvendo ('Punto 1 - ...'). Non comprimere le soluzioni.
+requested_points sono le sottodomande e le operazioni richieste, MAI i punteggi dell'esame.
+Se la consegna non numera i sottopunti, elenca comunque le operazioni che richiede;
+non usare segnaposto come 'Non indicato'. Non citare nomi di campi JSON nella prosa didattica.
 In assenza di esercizi delle fonti aggiungi almeno un esercizio applicativo, origin='generated',
 con dati dichiarati, soluzione completa, risposte ai punti e controlli dimensionali/limite.
 Per materie non quantitative usa un caso ragionato. Distingui sempre i casi creati dagli originali.
 Spiega OGNI visual_id assegnato con how_to_read (assi, legende, lettura progressiva), meaning,
 takeaways e limitations. La figura originale verrà riprodotta automaticamente dal sistema.
+Descrivi il verso rispetto agli assi: un tratto orizzontale procede verso destra o sinistra,
+non in salita/discesa; un tratto verticale procede verso l'alto o il basso. Distingui la
+pendenza della funzione dal verso con cui la curva viene percorsa, anche nelle risposte
+sintetiche. Non dichiarare assenti dati o figure già forniti.
 charts è facoltativo: SOLO dati numerici espliciti nelle fonti, con provenienza dettagliata,
 unità in xlabel/ylabel. Non digitalizzare curve a occhio, non inventare misurazioni. Puoi
 omettere charts senza penalità: le figure originali sono già preservate.
@@ -72,10 +83,18 @@ senza aggiungere argomenti del programma non supportati come se fossero nelle fo
 REVIEW = COMMON + r"""
 Ruolo: revisore indipendente. Verifica la lezione contro TUTTE le evidenze e le immagini
 assegnate. Le immagini includono pagine originali, ritagli e grafici effettivamente renderizzati.
+reviewed_page_ids indica il sottoinsieme di pagine assegnato a questo capitolo.
+source_visual_catalog elenca anche figure di altre pagine: usalo per controllare affermazioni
+sulla presenza di grafici nelle fonti. Una figura non allegata a questo capitolo NON è
+necessariamente assente dai PDF. Non chiedere di dichiararla assente o inventata se compare
+nel catalogo. Il catalogo prova la presenza, non i dettagli visivi di immagini non allegate;
+complete=false indica un catalogo parziale e non permette di dedurre assenze.
 Controlla completezza topic_ids, fedeltà di tutte le consegne, correttezza di ogni formula,
 segni/unità/condizioni, passaggi matematici, corrispondenza tra punti richiesti e svolgimento,
 esercizi originali vs creati, grafici e spiegazioni, ritagli che non taglino legende,
 etichette sovrapposte e valori non supportati. Non accettare la sola plausibilità.
+Controlla anche le risposte sintetiche: un tratto orizzontale non sale né scende; il verso
+di percorrenza di una curva non cambia il segno della sua derivata rispetto all'ascissa.
 Indica problemi specifici con target e correction attuabili. Problemi scientifici o omissioni
 sono major/blocker. Score 0-100 per copertura, correttezza, chiarezza; passed=true solo se
 tutti almeno 90 e nessun major/blocker. Un controllo automatico non è garanzia di perfezione.

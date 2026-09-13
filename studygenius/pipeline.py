@@ -62,6 +62,34 @@ def bounded_groups(items, max_items, max_chars, key=lambda x: x):
         yield group
 
 
+def source_visual_catalog(visuals, max_chars=60000):
+    """Keep source presence distinct from the images assigned to one chapter."""
+    entries, size = [], 0
+    for visual_id, visual in visuals.items():
+        entry = {"visual_id": visual_id, "page_id": visual["page_id"], "title": visual["title"]}
+        length = len(json.dumps(entry, ensure_ascii=False))
+        if size + length > max_chars:
+            break
+        entries.append(entry)
+        size += length
+    return {"entries": entries, "complete": len(entries) == len(visuals), "total": len(visuals)}
+
+
+def source_page_context(topics, assigned_ids, max_chars=60000):
+    """Supply tables/givens on an exercise's pages without assigning extra topics."""
+    pages = {topics[t]["page_id"] for t in assigned_ids}
+    supporting = [(t, value) for t, value in topics.items()
+                  if t not in assigned_ids and value["page_id"] in pages]
+    entries, size = {}, 0
+    for topic_id, value in supporting:
+        length = len(json.dumps({topic_id: value}, ensure_ascii=False))
+        if size + length > max_chars:
+            break
+        entries[topic_id] = value
+        size += length
+    return {"entries": entries, "complete": len(entries) == len(supporting), "total": len(supporting)}
+
+
 class Pipeline:
     def __init__(self, store: Store, job_id: str, settings: Settings, stop: asyncio.Event):
         self.store, self.job_id, self.settings, self.stop = store, job_id, settings, stop
@@ -265,6 +293,7 @@ class Pipeline:
         context = {"exam_brief": self.options.exam_brief, "plan": plan.model_dump(),
                    "course_guide": self.course_guide.model_dump(), "course_outline": self.course_outline,
                    "topics": {t: topics[t] for t in plan.topic_ids},
+                   "source_page_context": source_page_context(topics, plan.topic_ids),
                    "visuals": {v: visuals[v] for v in visual_ids}}
         source_images = [self.directory / page_map[p].image for p in sorted({topics[t]["page_id"] for t in plan.topic_ids})]
         feedback = None
@@ -290,7 +319,9 @@ class Pipeline:
                 self.store.event(self.job_id, f"Capitolo {index+1}: correggo un errore di compilazione LaTeX.")
                 continue
             chart_images = await asyncio.to_thread(render_charts, lesson, folder / "plots", f"C{index+1:03d}")
-            review_context = {**context, "lesson": lesson.model_dump(), "latex_diagnostics": preview_diagnostics}
+            review_context = {**context, "lesson": lesson.model_dump(), "latex_diagnostics": preview_diagnostics,
+                              "source_visual_catalog": source_visual_catalog(visuals),
+                              "reviewed_page_ids": sorted({topics[t]["page_id"] for t in plan.topic_ids})}
             review_images = [*source_images, *[Path(assets[v]["path"]) for v in visual_ids], *chart_images]
             # Each part checks the full textual evidence. Split only image payloads to stay bounded.
             partial_reviews = []
@@ -304,8 +335,11 @@ class Pipeline:
             if review.accepted or attempt == self.options.review_rounds:
                 return lesson, review
             feedback = review.model_dump()
-            # A safe fallback for bad crops: use the entire source page on subsequent attempts.
-            for visual_id in visual_ids:
+            # Scientific feedback must not shrink a readable table into a whole page.
+            bad_crop = any(i.severity in ("major", "blocker") and
+                           any(word in (i.target + " " + i.message + " " + i.correction).lower()
+                               for word in ("ritagl", "crop")) for i in review.issues)
+            for visual_id in visual_ids if bad_crop else []:
                 from .models import SourceVisual
                 value = visuals[visual_id]
                 full = SourceVisual(title=value["title"], description=value["description"], bbox=[0, 0, 1000, 1000])

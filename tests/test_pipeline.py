@@ -16,10 +16,61 @@ from studygenius.render import latex_engine
 from studygenius.storage import BudgetExceeded, Store, read_json
 
 
+async def test_chapter_context_includes_source_data_and_other_page_figures(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    plan, lesson = demo_content()
+    store = Store(tmp_path)
+    job = store.create(JobOptions(title="Presenza di dati e figure").model_dump())
+    pipeline = Pipeline(store, job, Settings(), asyncio.Event())
+    pipeline.course_guide = CourseGuide(conventions=[], symbols=[], conflicts=[])
+    pipeline.course_outline = [plan.model_dump()]
+    (pipeline.directory / "outline.json").write_text(json.dumps([plan.model_dump()]))
+    folder = pipeline.directory / "chapters" / "C001"
+    folder.mkdir(parents=True)
+    topics = {topic: {"page_id": f"D001-P{i:04d}"} for i, topic in enumerate(plan.topic_ids, 1)}
+    topics["D001-P0002-T99"] = {"page_id": "D001-P0002", "title": "Dati", "content": "V_A=10 L; V_B=20 L"}
+    visuals = {"D001-P0001-V01": {"page_id": "D001-P0001", "title": "Diagramma p-V"},
+               "D001-P0003-V01": {"page_id": "D001-P0003", "title": "Diagramma T-S"}}
+    page_map = {page: SimpleNamespace(image=page + ".jpg")
+                for page in ("D001-P0001", "D001-P0002", "D001-P0003")}
+    seen = []
+
+    async def response(provider, task, system, content, schema, **kwargs):
+        context = json.loads(content.split("\nCorreggi questa versione precedente", 1)[0])
+        if provider == "deepseek":
+            assert "D001-P0002-T99" not in context["plan"]["topic_ids"]
+            assert context["source_page_context"]["entries"]["D001-P0002-T99"]["content"] == "V_A=10 L; V_B=20 L"
+            return lesson
+        seen.append(context)
+        assert context["reviewed_page_ids"] == ["D001-P0001", "D001-P0002"]
+        assert any(v["title"] == "Diagramma T-S" and v["page_id"] == "D001-P0003"
+                   for v in context["source_visual_catalog"]["entries"])
+        assert context["source_visual_catalog"]["complete"] is True
+        assert all("P0003" not in str(path) for path in kwargs["images"])
+        if len(seen) == 1:
+            return Review(passed=False, coverage=90, correctness=85, clarity=96, issues=[{
+                "severity": "major", "target": "uncertainties[0]",
+                "message": "La lezione dichiara assente il diagramma T-S, presente in un'altra pagina.",
+                "correction": "Riconoscere la presenza del diagramma nella fonte."}])
+        return Review(passed=True, coverage=96, correctness=96, clarity=96, issues=[])
+
+    await pipeline.models.close()
+    pipeline.models = SimpleNamespace(json=response)
+    monkeypatch.setattr("studygenius.pipeline.build_book", lambda *args: {})
+    monkeypatch.setattr("studygenius.pipeline.render_charts", lambda *args: [])
+    def unexpected_crop(*args):
+        raise AssertionError("Un rilievo scientifico non deve cambiare i ritagli")
+    monkeypatch.setattr("studygenius.pipeline.crop_visual", unexpected_crop)
+    await pipeline.chapter(0, plan, folder, topics, visuals, ["D001-P0001-V01"], page_map,
+                           {"D001-P0001-V01": {"path": str(tmp_path / "figure.png")}}, {}, [])
+    assert len(seen) == 2
+
+
 @pytest.mark.skipif(not latex_engine(),reason="Requires a real XeLaTeX or LuaLaTeX installation")
 async def test_complete_live_pipeline_with_replayed_provider_responses_and_resume(tmp_path,monkeypatch):
     """HTTP is replayed; ingestion, accounting, cache, reviews and LaTeX are the real code."""
     plan,lesson=demo_content()
+    lesson.introduction += " Notazione di controllo: pV^γ, V_10, ∫ p dV e ΔU=0 ⇒ q=-w."
     visual=SourceVisual(title="Isoterma del gas ideale",bbox=[50,320,950,780],description="Volume in litri; pressione in kPa; curva isoterma decrescente.")
     evidence=EvidenceBatch(pages=[
         PageAnalysis(page_id="D001-P0001",topics=[Topic(title="Gas ideale",content="Gas ideale: pV=nRT. Una mole, 300 K, R=8.314 J/(mol K). "+lesson.sections[0].paragraphs[0],kind="theory")],visuals=[visual]),

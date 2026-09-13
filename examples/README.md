@@ -1,5 +1,6 @@
 # Esempi consultabili
 
+- **[Ciclo di Carnot](carnot/README.md)**: prova con diagrammi p-V e T-S, quattro trasformazioni, derivazioni ed esercizi.
 - **collaudo-live.pdf**: dispensa di 20 pagine prodotta con risposte reali di Gemini e DeepSeek, con i limiti delle fonti visibili all'inizio.
 - **fonte-gas-ideale.pdf**: le due pagine sintetiche usate per la prova live. L'impronta coincide con il manifesto contenuto nell'archivio sorgenti.
 - **collaudo-live-sorgenti.zip**: LaTeX, figure, contenuti strutturati e verifiche. Estrai tutto e compila `dispensa.tex` due volte con XeLaTeX.
