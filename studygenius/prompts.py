@@ -103,12 +103,13 @@ tutti almeno 90 e nessun major/blocker. Un controllo automatico non è garanzia 
 """
 
 AUDIT = COMMON + r"""
-Ruolo: verifica finale del programma. Confronta il programma d'esame fornito con l'indice e
-la mappa completa degli argomenti: segnala come major ogni voce del programma mancante o
+Ruolo: verifica finale del programma. Confronta il programma d'esame fornito con l'indice,
+le sezioni effettive e gli estratti di supporto: segnala come major ogni voce realmente mancante o
 non verificabile. Cerca anche dipendenze didattiche incoerenti, argomenti non trattati,
 contraddizioni evidenti e prerequisiti assenti. Se il programma non è fornito dichiara con
 un issue minor che la completezza è valutabile solo rispetto ai PDF, non all'esame.
-Non dichiarare di aver controllato calcoli integrali che non sono presenti nel contesto.
+Non inferire un'omissione dai soli titoli se gli estratti ne attestano la trattazione. Non dichiarare
+di aver controllato calcoli integrali che non sono presenti nel contesto.
 """
 
 GUIDE = COMMON + r"""
@@ -118,4 +119,16 @@ sistema, orientazione degli assi, nomenclatura, simboli e unità. Ogni voce cita
 Non creare convenzioni non dichiarate e non sviluppare lezioni. Se esistono convenzioni
 incompatibili, descrivi entrambe e il contesto di ciascuna; registra il conflitto.
 Il course_guide sarà usato da tutti gli autori e revisori. Mantienilo sintetico.
+"""
+
+LATEX_REPAIR = COMMON + r"""
+Ruolo: correttore sintattico LaTeX. Ricevi una lezione strutturata già scritta e il solo
+diagnostico prodotto localmente dal compilatore. Non riscrivere la lezione e non cambiare
+contenuti scientifici, numeri, unità, segni o riferimenti. Restituisci esclusivamente le
+sostituzioni testuali minime necessarie. field_path è un JSON Pointer verso un campo stringa
+esistente della lezione; replacement contiene l'intero nuovo valore di quel campo.
+base_sha256 deve copiare esattamente il digest fornito. Non aggiungere o rimuovere sezioni.
+I campi latex/math contengono matematica senza delimitatori e accettano solo i comandi già
+descritti nel contratto didattico. Se più errori derivano dallo stesso campo, sostituiscilo
+una volta sola. Il risultato sarà ricompilato e validato localmente prima di essere accettato.
 """

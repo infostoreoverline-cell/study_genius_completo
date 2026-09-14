@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from studygenius.demo import demo_content
 from studygenius.models import EvidenceBatch, Outline, PageAnalysis, Series, SourceVisual
 from studygenius.pipeline import bounded_groups, validate_evidence, validate_lesson, validate_outline
-from studygenius.render import escape, rich, safe_math, validate_lesson_math
+from studygenius.render import escape, plot_text, rich, safe_math, validate_lesson_math, wrap_display_math
 
 
 def test_every_page_and_topic_must_be_accounted_for():
@@ -108,3 +108,28 @@ def test_unicode_symbols_and_greek_exponents_are_typeset_safely():
     assert r"\(pV^\)" not in value
     assert r"\(pV^\)" not in rich("Espressione incompleta pV^")
     assert r"\textbackslash{}input" in rich(r"η: \input{private-settings.json}")
+
+
+def test_rich_normalizes_calculator_powers_and_indexed_delta():
+    value = rich(r"Vale TV^(γ−1) = costante, R=8{,}314 e ΔU_AB = 0.")
+    assert r"\(TV^{\gamma -1}\)" in value
+    assert r"\(\Delta U_{AB}\)" in value
+    assert "8,314" in value and r"8\{,\}314" not in value
+    assert r"\textasciicircum" not in value
+    assert r"\_AB" not in value
+
+
+def test_long_display_math_is_broken_into_readable_rows():
+    value = (r"q_{AB}=nRT_h\int_{V_A}^{V_B}\frac{\mathrm{d}V}{V}=nRT_h\ln\frac{V_B}{V_A}"
+             r"=3457{,}7\ \text{J};\quad w_{AB}=-3457{,}7\ \text{J};\quad \Delta U_{AB}=0")
+    wrapped = wrap_display_math(value, target_length=80)
+    assert wrapped.startswith(r"\begin{gathered}")
+    assert wrapped.count(r"\\") >= 3
+    assert r"\Delta U_{AB}=0" in wrapped
+
+
+def test_plot_text_formats_simple_indices_without_accepting_authored_math():
+    value = plot_text(r"Entropia S_A; $\input{bad}$; R=8{,}314")
+    assert r"$S_{\mathrm{A}}$" in value
+    assert "$\\input" not in value
+    assert "8,314" in value

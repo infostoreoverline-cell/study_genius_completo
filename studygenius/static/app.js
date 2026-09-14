@@ -46,11 +46,13 @@ async function refreshHealth() {
 function applySettings(settings) {
   $("remember-keys").checked = Boolean(settings.remembered);
   $("gemini-model").value = settings.gemini_model; $("deepseek-model").value = settings.deepseek_model;
+  $("deepseek-fast-model").value = settings.deepseek_fast_model;
+  $("deepseek-reasoning-effort").value = settings.deepseek_reasoning_effort;
   $("gemini-status").textContent = settings.gemini_configured ? "CHIAVE PRESENTE" : "DA CONFIGURARE";
   $("deepseek-status").textContent = settings.deepseek_configured ? "CHIAVE PRESENTE" : "DA CONFIGURARE";
 }
 function settingsBody(clear = false) {
-  return {gemini_key:$("gemini-key").value, deepseek_key:$("deepseek-key").value, gemini_model:$("gemini-model").value.trim(), deepseek_model:$("deepseek-model").value.trim(), remember:$("remember-keys").checked, clear_keys:clear};
+  return {gemini_key:$("gemini-key").value, deepseek_key:$("deepseek-key").value, gemini_model:$("gemini-model").value.trim(), deepseek_model:$("deepseek-model").value.trim(), deepseek_fast_model:$("deepseek-fast-model").value.trim(), deepseek_reasoning_effort:$("deepseek-reasoning-effort").value, remember:$("remember-keys").checked, clear_keys:clear};
 }
 async function saveSettings(clear = false) {
   const value = await api("/api/settings", {method:"POST", body:JSON.stringify(settingsBody(clear))});
@@ -87,7 +89,8 @@ async function refreshJob() {
   $("pause-button").hidden = !active; $("resume-button").hidden = active || complete;
   $("save-limits").disabled = active;
   $("usage-calls").textContent = number(job.usage.calls); $("usage-tokens").textContent = number(job.usage.total_tokens);
-  $("usage-note").textContent = "Limite: " + number(job.options.max_api_calls) + " chiamate. " + (job.usage.uncertain_calls ? number(job.usage.uncertain_calls) + " chiamate con consumo non confermato dal provider." : "Conteggi registrati dalle risposte API, inclusi i tentativi.");
+  const cacheNote = job.usage.cached_input_tokens ? " " + number(job.usage.cached_input_tokens) + " token di input serviti dalla cache del provider." : "";
+  $("usage-note").textContent = "Limite: " + number(job.options.max_api_calls) + " chiamate. " + (job.usage.uncertain_calls ? number(job.usage.uncertain_calls) + " chiamate con consumo non confermato dal provider." : "Conteggi registrati dalle risposte API, inclusi i tentativi.") + cacheNote;
   if (lastLimitsJob !== job.id) { $("job-max-calls").value = job.options.max_api_calls; $("job-max-tokens").value = job.options.max_total_tokens; lastLimitsJob = job.id; }
   $("result-card").hidden = !complete;
   if (complete) {

@@ -61,9 +61,18 @@ async def test_chapter_context_includes_source_data_and_other_page_figures(tmp_p
     def unexpected_crop(*args):
         raise AssertionError("Un rilievo scientifico non deve cambiare i ritagli")
     monkeypatch.setattr("studygenius.pipeline.crop_visual", unexpected_crop)
-    await pipeline.chapter(0, plan, folder, topics, visuals, ["D001-P0001-V01"], page_map,
-                           {"D001-P0001-V01": {"path": str(tmp_path / "figure.png")}}, {}, [])
+    arguments = (0, plan, folder, topics, visuals, ["D001-P0001-V01"], page_map,
+                 {"D001-P0001-V01": {"path": str(tmp_path / "figure.png")}}, {}, [])
+    await pipeline.chapter(*arguments)
     assert len(seen) == 2
+    checkpoint = json.loads((folder / "review-1.json").read_text())
+    assert checkpoint["lesson_sha256"] and checkpoint["review"]["passed"] is True
+
+    async def unexpected_model_call(*args, **kwargs):
+        raise AssertionError("Bozze e revisioni associate devono essere riprese senza nuove chiamate")
+    pipeline.models = SimpleNamespace(json=unexpected_model_call)
+    resumed_lesson, resumed_review = await pipeline.chapter(*arguments)
+    assert resumed_lesson == lesson and resumed_review.accepted
 
 
 @pytest.mark.skipif(not latex_engine(),reason="Requires a real XeLaTeX or LuaLaTeX installation")
@@ -80,7 +89,7 @@ async def test_complete_live_pipeline_with_replayed_provider_responses_and_resum
     def handler(request):
         body=json.loads(request.content)
         provider="gemini" if "googleapis" in request.url.host else "deepseek"
-        system=body["systemInstruction"]["parts"][0]["text"] if provider=="gemini" else body["messages"][0]["content"]
+        system=body["systemInstruction"]["parts"][0]["text"] if provider=="gemini" else body.get("instructions",body.get("messages",[{}])[0].get("content",""))
         if "Ruolo: lettore scientifico" in system: value=evidence.model_dump();stage="read"
         elif "Ruolo: progettista" in system: value={"chapters":[plan.model_dump()]};stage="plan"
         elif "Ruolo: docente" in system: value=lesson.model_dump();stage="write"
@@ -91,7 +100,7 @@ async def test_complete_live_pipeline_with_replayed_provider_responses_and_resum
         if provider=="gemini":
             assert any("inlineData" in p for p in body["contents"][0]["parts"]) if stage=="read" else True
             return httpx.Response(200,json={"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":text}]}}],"usageMetadata":{"promptTokenCount":50,"candidatesTokenCount":100,"totalTokenCount":150}})
-        return httpx.Response(200,json={"choices":[{"finish_reason":"stop","message":{"content":text}}],"usage":{"prompt_tokens":50,"completion_tokens":100,"total_tokens":150}})
+        return httpx.Response(200,json={"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":text}]}],"usage":{"input_tokens":50,"output_tokens":100,"total_tokens":150,"input_tokens_details":{"cached_tokens":20}}})
     def models(settings,store,job_id,check):
         return Models(settings,store,job_id,check,httpx.MockTransport(handler))
     monkeypatch.setattr("studygenius.pipeline.Models",models)

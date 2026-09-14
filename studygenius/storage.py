@@ -46,8 +46,12 @@ class Store:
                   provider TEXT NOT NULL, model TEXT NOT NULL, task TEXT NOT NULL,
                   time REAL NOT NULL, status TEXT NOT NULL DEFAULT 'started',
                   input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
-                  total_tokens INTEGER DEFAULT 0);
+                  total_tokens INTEGER DEFAULT 0, cached_input_tokens INTEGER DEFAULT 0);
             """)
+            # Transparent migration for projects created by StudyGenius 1.0.
+            columns = {row[1] for row in con.execute("PRAGMA table_info(calls)")}
+            if "cached_input_tokens" not in columns:
+                con.execute("ALTER TABLE calls ADD COLUMN cached_input_tokens INTEGER DEFAULT 0")
 
     def connect(self):
         con = sqlite3.connect(self.db, timeout=30)
@@ -114,15 +118,17 @@ class Store:
                               (job_id, provider, model, task, time.time()))
             return cur.lastrowid
 
-    def finish_call(self, call_id: int, status: str, incoming=0, outgoing=0, total=0):
+    def finish_call(self, call_id: int, status: str, incoming=0, outgoing=0, total=0, cached=0):
         with self.connect() as con:
-            con.execute("UPDATE calls SET status=?,input_tokens=?,output_tokens=?,total_tokens=? WHERE id=?",
-                        (status, incoming, outgoing, total, call_id))
+            con.execute("UPDATE calls SET status=?,input_tokens=?,output_tokens=?,total_tokens=?,cached_input_tokens=? WHERE id=?",
+                        (status, incoming, outgoing, total, cached, call_id))
 
     def usage(self, job_id: str) -> dict:
         with self.connect() as con:
             row = con.execute("""SELECT COUNT(*) calls, COALESCE(SUM(input_tokens),0) input_tokens,
                 COALESCE(SUM(output_tokens),0) output_tokens, COALESCE(SUM(total_tokens),0) total_tokens,
+                COALESCE(SUM(cached_input_tokens),0) cached_input_tokens,
+                COALESCE(SUM(input_tokens-cached_input_tokens),0) uncached_input_tokens,
                 COALESCE(SUM(CASE WHEN status IN ('started','transport_error') THEN 1 ELSE 0 END),0) uncertain_calls
                 FROM calls WHERE job_id=?""", (job_id,)).fetchone()
         return dict(row)

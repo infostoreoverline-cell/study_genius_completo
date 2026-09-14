@@ -1,0 +1,70 @@
+{
+  "source": "examples/carnot/carnot-fonte.pdf",
+  "vision": {
+    "pages": 3,
+    "baseline_fixed_150_dpi": {
+      "pixels": 6530142,
+      "bytes": 594486,
+      "seconds": 0.3558
+    },
+    "adaptive": {
+      "pixels": 5058144,
+      "bytes": 379528,
+      "seconds": 0.242,
+      "profiles": [
+        {
+          "page": 1,
+          "profile": "technical",
+          "dpi": 132,
+          "width": 1092,
+          "height": 1544,
+          "pixels": 1686048,
+          "bytes": 112307,
+          "jpeg_quality": 84
+        },
+        {
+          "page": 2,
+          "profile": "technical",
+          "dpi": 132,
+          "width": 1092,
+          "height": 1544,
+          "pixels": 1686048,
+          "bytes": 119847,
+          "jpeg_quality": 84
+        },
+        {
+          "page": 3,
+          "profile": "technical",
+          "dpi": 132,
+          "width": 1092,
+          "height": 1544,
+          "pixels": 1686048,
+          "bytes": 147374,
+          "jpeg_quality": 84
+        }
+      ]
+    },
+    "change_percent": {
+      "pixels": -22.54,
+      "bytes": -36.16
+    }
+  },
+  "layout_review": {
+    "pages": 59,
+    "old_visual_review_calls": 15,
+    "new_visual_review_calls": 7,
+    "overview_sheets": 7,
+    "full_resolution_pages": 11,
+    "call_change_percent": -53.33,
+    "local_scan_issues": []
+  },
+  "schema_serialization": {
+    "normal_chars": 5647,
+    "compact_chars": 5103,
+    "change_percent": -9.63
+  },
+  "notes": [
+    "Pixel e byte misurano il payload locale; i token immagine effettivi dipendono dal provider.",
+    "Le panoramiche coprono tutte le pagine; i controlli locali e le pagine a rischio restano a piena risoluzione."
+  ]
+}

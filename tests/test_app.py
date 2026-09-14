@@ -63,6 +63,16 @@ def test_secrets_are_never_echoed_and_are_only_saved_by_opt_in(tmp_path,monkeypa
     assert not (tmp_path/"private-settings.json").exists()
 
 
+def test_browser_settings_update_preserves_env_concurrency(tmp_path,monkeypatch):
+    monkeypatch.setenv("GEMINI_CONCURRENCY", "5")
+    monkeypatch.setenv("DEEPSEEK_CONCURRENCY", "4")
+    _,client,headers=session(tmp_path,monkeypatch)
+    response=client.post("/api/settings",headers=headers,json={"gemini_model":"gemini-test"})
+    assert response.status_code==200
+    assert response.json()["gemini_concurrency"]==5
+    assert response.json()["deepseek_concurrency"]==4
+
+
 def test_output_allowlist_and_recovery(tmp_path,monkeypatch):
     app,client,headers=session(tmp_path,monkeypatch)
     store=app.state.store

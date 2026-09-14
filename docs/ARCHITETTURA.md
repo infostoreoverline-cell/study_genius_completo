@@ -7,7 +7,8 @@
 | `app.py` | API FastAPI, upload, configurazione privata, coda locale, download autorizzati |
 | `static/` | Interfaccia italiana senza framework di build, CDN o dipendenze browser remote |
 | `storage.py` | SQLite per stati, eventi e consumi; JSON atomici per i checkpoint |
-| `ingest.py` | Validazione PDF, impronte SHA-256, testo e immagini di tutte le pagine |
+| `ingest.py` | Validazione PDF, impronte SHA-256 e acquisizione parallela di tutte le pagine |
+| `vision.py` | Profili adattivi per immagini multimodali e fallback ad alta fedeltà |
 | `models.py` | Contratti Pydantic per evidenze, indice, lezioni, grafici e revisioni |
 | `providers.py` | API native Gemini e DeepSeek, retry, cache e conteggi persistenti |
 | `prompts.py` | Protocollo didattico e ruoli, versionati insieme al codice |
@@ -19,14 +20,16 @@
 
 ```mermaid
 flowchart TD
-    A[PDF caricati] --> B[Testo e immagini per pagina]
+    A[PDF caricati] --> B[Testo e immagini adattive per pagina]
     B --> C[Gemini: evidenze e figure]
-    C --> D[DeepSeek: indice e capitoli]
+    C --> D[DeepSeek Flash: indice]
     C --> I[Gemini: convenzioni condivise]
     I --> D
-    D --> E[LaTeX e figure renderizzate]
+    D --> J[Routing per complessità]
+    J --> K[DeepSeek Flash o Pro: capitoli]
+    K --> E[LaTeX e figure renderizzate]
     E --> F[Gemini: revisione con fonti]
-    F -->|Correzioni entro il limite| D
+    F -->|Correzioni entro il limite| K
     F -->|Versione conclusa| G[PDF e controllo visivo finale]
     G --> H[PDF, sorgenti e rapporto]
 ```
@@ -41,12 +44,12 @@ Le figure di una pagina condivisa tra più capitoli sono assegnate al primo capi
 
 ## Contesto e documenti lunghi
 
-- Lettura: 1-4 pagine per richiesta, immagini incluse. Il testo estratto non è usato come sostituto della lettura visiva.
+- Lettura: 1-4 pagine per richiesta, immagini incluse. Rendering locale a profilo adattivo; una segnalazione esplicita di illeggibilità produce una rilettura isolata a risoluzione maggiore.
 - Pianificazione: inventari di massimo 100 argomenti e limiti sul numero di caratteri.
 - Stesura: massimo 10 argomenti e 60.000 caratteri di evidenze per capitolo; i gruppi troppo estesi vengono suddivisi preservando tutti gli ID.
 - Coerenza: estrazione delle convenzioni da tutte le evidenze in blocchi di 100 argomenti / 80.000 caratteri; sintesi delle convenzioni e dei conflitti, condivisa con autore e revisore insieme all'indice. Un cambio della guida invalida i capitoli salvati con una guida diversa.
-- Revisione delle fonti: immagini in gruppi di massimo 8, con il contesto testuale del capitolo.
-- Revisione dell'impaginazione: tutte le pagine renderizzate, 4 per richiesta.
+- Revisione delle fonti: immagini in gruppi di massimo 12, con il contesto testuale del capitolo; gruppi indipendenti eseguiti con concorrenza limitata.
+- Revisione dell'impaginazione: geometria e font di tutte le pagine controllati localmente; tavole panoramiche numerate coprono il documento completo; pagine con figure, testo piccolo o confini strutturali vengono inviate anche a piena risoluzione.
 - Rilievi finali: se la revisione visiva aggiunge problemi, l'elenco iniziale nel PDF viene aggiornato e ricompilato. Il rapporto distingue l'impaginazione sottoposta al modello da quella finale; non attribuisce una seconda revisione visiva alla nuova pagina dei rilievi.
 - Confronto globale con il programma: indice e obiettivi completi, fino a 180.000 caratteri. Oltre tale limite viene segnalata la necessità di verifica manuale; non si finge che il confronto sia stato eseguito.
 
@@ -58,9 +61,9 @@ Gli stati sono `ready`, `queued`, `running`, `paused`, `failed`, `needs_review`,
 
 Ogni richiesta è prenotata in una transazione SQLite **prima** dell'invio. I retry contano e i limiti sopravvivono al riavvio. La soglia dei token usa soltanto consumi ricevuti dal provider e non può garantire un costo massimo monetario. I timeout possono avere consumi sconosciuti.
 
-Le risposte valide vengono memorizzate prima di applicare una pausa richiesta durante la chiamata. La chiave di cache include versione del protocollo, provider, modello, prompt, schema e impronte delle immagini. Una risposta troncata non viene accettata come documento valido. I tentativi di riparazione del JSON e di aumento dell'output sono limitati.
+Le risposte valide vengono memorizzate prima di applicare una pausa richiesta durante la chiamata. La chiave di cache include versione del protocollo, provider, modello, prompt, schema e impronte delle immagini. Esistono una cache per progetto e una cache condivisa locale, entrambe rivalidate. I prefissi comuni precedono il contenuto variabile per favorire le cache native dei provider. Una risposta troncata non viene accettata come documento valido. I tentativi di riparazione del JSON e di aumento dell'output sono limitati.
 
-I checkpoint di lettura e dei capitoli completati sono riutilizzati quando si riprende. Per rigenerare anche i capitoli già completati con un diverso modello o protocollo bisogna creare un nuovo progetto.
+I checkpoint di lettura, le bozze, le revisioni intermedie e i capitoli completati sono riutilizzati quando si riprende. Ogni bozza viene rivalidata contro argomenti e figure prima dell'uso. Per rigenerare anche i capitoli già completati con un diverso modello o protocollo bisogna creare un nuovo progetto.
 
 ## LaTeX e dati non fidati
 

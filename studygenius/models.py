@@ -169,6 +169,19 @@ class Lesson(Contract):
     uncertainties: list[str] = Field(default_factory=list)
 
 
+class TextReplacement(Contract):
+    """A narrow repair used after a local LaTeX compiler failure."""
+    field_path: str = Field(pattern=r"^/(?:introduction|sections|exercises|recall|visuals|charts|recap|uncertainties)(?:/[A-Za-z0-9_-]+)*$",
+                            max_length=300)
+    replacement: str = Field(max_length=12000)
+    reason: str = Field(min_length=5, max_length=500)
+
+
+class LessonRepair(Contract):
+    base_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    replacements: list[TextReplacement] = Field(min_length=1, max_length=12)
+
+
 class Issue(Contract):
     severity: Literal["blocker", "major", "minor"]
     target: str

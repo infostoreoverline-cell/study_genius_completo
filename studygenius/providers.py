@@ -77,36 +77,64 @@ class Models:
         self.settings, self.store, self.job_id, self.check = settings, store, job_id, check
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(300, connect=20), transport=transport)
         self.cache = store.directory(job_id) / "cache"
+        self.shared_cache = store.root / "model-cache"
         self.gemini_native_schema = True
+        self.deepseek_responses_schema = True
+        self.rate_limits = {
+            "gemini": asyncio.Semaphore(settings.gemini_concurrency),
+            "deepseek": asyncio.Semaphore(settings.deepseek_concurrency),
+        }
+        self.cache_stats = {"job_hits": 0, "shared_hits": 0, "pending_hits": 0, "writes": 0}
 
     async def close(self):
         await self.client.aclose()
 
     async def json(self, provider: str, task: str, system: str, prompt: str, schema: type[T],
                    images: list[Path] | None = None, validate: Callable[[T], None] | None = None,
-                   max_output: int = 16000) -> T:
-        model = getattr(self.settings, f"{provider}_model")
+                   max_output: int = 16000, tier: str = "quality") -> T:
+        model = self.model_for(provider, tier)
         images = images or []
+        contract = schema.model_json_schema()
+        # Keep the original fingerprint shape so validated 1.0 checkpoints remain reusable.
         fingerprint = json.dumps({"v": PROMPT_VERSION, "provider": provider, "model": model,
-            "system": system, "prompt": prompt, "schema": schema.model_json_schema(), "output": max_output,
+            "system": system, "prompt": prompt, "schema": contract, "output": max_output,
             "images": [hashlib.sha256(p.read_bytes()).hexdigest() for p in images]}, sort_keys=True)
-        cache_path = self.cache / f"{hashlib.sha256(fingerprint.encode()).hexdigest()}.json"
+        digest = hashlib.sha256(fingerprint.encode()).hexdigest()
+        cache_path = self.cache / f"{digest}.json"
+        shared_path = self.shared_cache / digest[:2] / f"{digest}.json"
         pending_path = self.cache / "pending" / cache_path.name
         if cache_path.exists():
             result = schema.model_validate(read_json(cache_path))
             if validate:
                 validate(result)
+            self.cache_stats["job_hits"] += 1
             return result
+        if shared_path.exists():
+            try:
+                result = schema.model_validate(read_json(shared_path))
+                if validate:
+                    validate(result)
+            except (ValueError, ValidationError):
+                # A stricter local validator may reject an older shared result. Leave it
+                # available to the job that created it and regenerate for this context.
+                pass
+            else:
+                atomic_json(cache_path, result.model_dump(mode="json"))
+                self.cache_stats["shared_hits"] += 1
+                return result
         corrected_prompt = prompt
         output_limit = max_output
         pending_raw = read_json(pending_path).get("raw") if pending_path.exists() else None
+        if pending_raw is not None:
+            self.cache_stats["pending_hits"] += 1
         for correction in range(self.json_attempts):
             self.check()
             try:
                 if correction == 0 and pending_raw is not None:
                     raw = pending_raw
                 else:
-                    raw = await self.request(provider, task, system, corrected_prompt, schema.model_json_schema(), images, output_limit)
+                    raw = await self.request(provider, task, system, corrected_prompt, contract,
+                                             images, output_limit, model, tier)
                     # Retain a paid response before validation. A renderer/validator fix
                     # can revalidate it on resume without another API request. This
                     # private diagnostic is never treated as a validated cache entry.
@@ -121,7 +149,10 @@ class Models:
                 result = schema.model_validate(parse_json(raw))
                 if validate:
                     validate(result)
-                atomic_json(cache_path, result.model_dump(mode="json"))
+                value = result.model_dump(mode="json")
+                atomic_json(cache_path, value)
+                atomic_json(shared_path, value)
+                self.cache_stats["writes"] += 1
                 pending_path.unlink(missing_ok=True)
                 self.check()
                 return result
@@ -140,44 +171,73 @@ class Models:
                 self.store.event(self.job_id, f"{task}: correggo la struttura della risposta ({correction + 1}/{self.json_attempts - 1}).")
         raise AssertionError("unreachable")
 
-    async def request(self, provider, task, system, prompt, schema, images, max_output):
+    def model_for(self, provider: str, tier: str) -> str:
+        if provider == "gemini":
+            return self.settings.gemini_model
+        if provider == "deepseek":
+            if tier not in ("fast", "quality"):
+                raise ValueError("Tier del modello non supportato")
+            return self.settings.deepseek_fast_model if tier == "fast" else self.settings.deepseek_model
+        raise ValueError("Provider non supportato")
+
+    def _request_payload(self, provider, system, prompt, schema, images, max_output, model, tier):
         key = getattr(self.settings, f"{provider}_key").get_secret_value()
-        model = getattr(self.settings, f"{provider}_model")
         if not key:
             raise ProviderError(f"Inserisci la chiave API {provider} nelle impostazioni.")
+        compact_contract = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
         if provider == "gemini":
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             headers = {"x-goog-api-key": key}
             parts = [{"text": prompt}]
-            for p in images:
-                parts.extend([{"text": f"Immagine: {p.stem}"}, {"inlineData": {
-                    "mimeType": "image/jpeg" if p.suffix in (".jpg", ".jpeg") else "image/png",
-                    "data": base64.b64encode(p.read_bytes()).decode()}}])
+            for path in images:
+                parts.extend([{"text": f"Immagine: {path.stem}"}, {"inlineData": {
+                    "mimeType": "image/jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "image/png",
+                    "data": base64.b64encode(path.read_bytes()).decode()}}])
+            generation = {"responseMimeType": "application/json", "maxOutputTokens": max_output}
+            native = self.gemini_native_schema
+            if native:
+                generation["responseJsonSchema"] = gemini_schema(schema)
+            else:
+                parts.append({"text": "JSON Schema obbligatorio: " + compact_contract})
             body = {"systemInstruction": {"parts": [{"text": system}]},
-                    "contents": [{"role": "user", "parts": parts}],
-                    "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": gemini_schema(schema),
-                                         "maxOutputTokens": max_output}}
-            if not self.gemini_native_schema:
-                body["generationConfig"].pop("responseJsonSchema")
-                parts.append({"text": "JSON Schema da rispettare integralmente: " + json.dumps(schema, ensure_ascii=False)})
-        elif provider == "deepseek":
+                    "contents": [{"role": "user", "parts": parts}], "generationConfig": generation}
+            return url, headers, body, "gemini-schema" if native else "gemini-json"
+        if provider == "deepseek":
             if images:
                 raise ValueError("Le immagini di questa pipeline sono assegnate al revisore Gemini")
-            url = "https://api.deepseek.com/chat/completions"
             headers = {"Authorization": f"Bearer {key}"}
+            if self.deepseek_responses_schema:
+                # The Responses endpoint supports native JSON Schema. This removes the
+                # repeated contract from prose and gives the server a strict structure.
+                body = {"model": model, "instructions": system, "input": prompt,
+                        "text": {"format": {"type": "json_schema", "name": "studygenius_response",
+                                             "schema": schema}},
+                        "reasoning": {"effort": "none" if tier == "fast" else self.settings.deepseek_reasoning_effort},
+                        "max_output_tokens": max_output, "stream": False}
+                return "https://api.deepseek.com/responses", headers, body, "deepseek-responses"
             body = {"model": model, "messages": [{"role": "system", "content": system +
-                    "\nRispondi in JSON conforme a questo JSON Schema: " + json.dumps(schema, ensure_ascii=False)},
+                    "\nRestituisci JSON conforme a questo schema: " + compact_contract},
                     {"role": "user", "content": prompt}], "response_format": {"type": "json_object"},
                     "max_tokens": max_output, "stream": False}
-        else:
-            raise ValueError("Provider non supportato")
+            return "https://api.deepseek.com/chat/completions", headers, body, "deepseek-chat"
+        raise ValueError("Provider non supportato")
+
+    async def request(self, provider, task, system, prompt, schema, images, max_output, model, tier):
+        key = getattr(self.settings, f"{provider}_key").get_secret_value()
+        if not key:
+            raise ProviderError(f"Inserisci la chiave API {provider} nelle impostazioni.")
         for retry in range(4):
             self.check()
+            url, headers, body, response_style = self._request_payload(
+                provider, system, prompt, schema, images, max_output, model, tier)
             options = self.store.get(self.job_id)["options"]
             call_id = self.store.reserve_call(self.job_id, provider, model, task,
                                              options["max_api_calls"], options["max_total_tokens"])
             try:
-                response = await self.client.post(url, headers=headers, json=body)
+                # Backoff happens outside the semaphore, so a throttled request does not
+                # prevent an unrelated ready request from using the provider connection.
+                async with self.rate_limits[provider]:
+                    response = await self.client.post(url, headers=headers, json=body)
             except httpx.TransportError:
                 self.store.finish_call(call_id, "transport_error")
                 if retry == 3:
@@ -185,14 +245,18 @@ class Models:
                 await self.backoff(retry, task)
                 continue
             self.store.finish_call(call_id, f"http_{response.status_code}")
-            if (provider == "gemini" and response.status_code == 400
-                    and "responseJsonSchema" in body["generationConfig"] and retry < 3):
+            if provider == "gemini" and response.status_code == 400 and response_style == "gemini-schema" and retry < 3:
                 # Some serving versions reject valid but complex schemas. Keep JSON mode,
                 # include the full contract in the prompt, and retain identical local validation.
                 self.gemini_native_schema = False
-                body["generationConfig"].pop("responseJsonSchema")
-                parts.append({"text": "JSON Schema da rispettare integralmente: " + json.dumps(schema, ensure_ascii=False)})
                 self.store.event(self.job_id, f"{task}: adatto il formato della richiesta per questo modello.")
+                continue
+            if (provider == "deepseek" and response.status_code in (400, 404, 422)
+                    and response_style == "deepseek-responses" and retry < 3):
+                # Older accounts/endpoints may expose only Chat Completions. Fall back
+                # once, retain local Pydantic validation, and reuse that capability choice.
+                self.deepseek_responses_schema = False
+                self.store.event(self.job_id, f"{task}: endpoint Structured Outputs non disponibile; uso JSON validato localmente.")
                 continue
             if response.status_code in (408, 429, 500, 502, 503, 504):
                 if retry == 3:
@@ -212,7 +276,8 @@ class Models:
                     incoming = usage.get("promptTokenCount", 0)
                     outgoing = usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)
                     total = usage.get("totalTokenCount", incoming + outgoing)
-                    self.store.finish_call(call_id, "received", incoming, outgoing, total)
+                    cached = usage.get("cachedContentTokenCount", 0)
+                    self.store.finish_call(call_id, "received", incoming, outgoing, total, cached)
                     candidates = payload.get("candidates", [])
                     if not candidates:
                         raise ModelOutputError("Gemini non ha restituito candidati (blocco o risposta vuota).")
@@ -223,11 +288,27 @@ class Models:
                     if reason != "STOP":
                         raise ModelOutputError(f"Gemini: risposta incompleta o bloccata ({reason}). Riduci le pagine per blocco.")
                     text = "".join(p.get("text", "") for p in candidate.get("content", {}).get("parts", []) if not p.get("thought"))
+                elif response_style == "deepseek-responses":
+                    usage = payload.get("usage", {})
+                    incoming, outgoing = usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+                    total = usage.get("total_tokens", incoming + outgoing)
+                    cached = usage.get("input_tokens_details", {}).get("cached_tokens", 0)
+                    self.store.finish_call(call_id, "received", incoming, outgoing, total, cached)
+                    status = payload.get("status")
+                    if status == "incomplete" and payload.get("incomplete_details", {}).get("reason") == "max_output_tokens":
+                        raise TruncatedOutput("DeepSeek: output troncato; aumento il limite prima di riprovare.")
+                    if status != "completed":
+                        raise ModelOutputError(f"DeepSeek: risposta non completata ({status or 'stato assente'}).")
+                    text = "".join(part.get("text", "") for item in payload.get("output", [])
+                                   if item.get("type") == "message" for part in item.get("content", [])
+                                   if part.get("type") == "output_text")
                 else:
                     usage = payload.get("usage", {})
                     incoming, outgoing = usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
                     total = usage.get("total_tokens", incoming + outgoing)
-                    self.store.finish_call(call_id, "received", incoming, outgoing, total)
+                    cached = (usage.get("prompt_cache_hit_tokens", 0)
+                              or usage.get("input_tokens_details", {}).get("cached_tokens", 0))
+                    self.store.finish_call(call_id, "received", incoming, outgoing, total, cached)
                     candidate = payload["choices"][0]
                     if candidate.get("finish_reason") == "length":
                         raise TruncatedOutput("DeepSeek: output troncato anche dopo l'aumento del limite. Dividi il materiale in progetti più piccoli.")
@@ -274,6 +355,9 @@ async def available_models(settings: Settings) -> dict:
                 selected = getattr(settings, f"{provider}_model")
                 result[provider] = {"ok": selected in names, "models": names,
                                     "error": "" if selected in names else "Modello selezionato non presente nell'elenco"}
+                if provider == "deepseek":
+                    result[provider]["fast_model"] = settings.deepseek_fast_model
+                    result[provider]["fast_model_ok"] = settings.deepseek_fast_model in names
             except (httpx.HTTPError, ValueError, KeyError):
                 result[provider] = {"ok": False, "error": "Impossibile raggiungere il servizio o leggere l'elenco modelli"}
     return result

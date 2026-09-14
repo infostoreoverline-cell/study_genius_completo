@@ -34,7 +34,14 @@ def setup(tmp_path, handler, **options):
 def response(provider="deepseek", text='{"answer":"ok"}', reason=None):
     if provider == "gemini":
         return httpx.Response(200, json={"candidates":[{"finishReason":reason or "STOP", "content":{"parts":[{"text":"internal", "thought":True},{"text":text}]}}], "usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":20,"thoughtsTokenCount":5,"totalTokenCount":35}})
-    return httpx.Response(200,json={"choices":[{"finish_reason":reason or "stop","message":{"content":text}}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}})
+    if provider == "deepseek-chat":
+        return httpx.Response(200,json={"choices":[{"finish_reason":reason or "stop","message":{"content":text}}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_cache_hit_tokens":3}})
+    status = "incomplete" if reason == "length" else "completed"
+    return httpx.Response(200,json={"status":status,
+        "incomplete_details":{"reason":"max_output_tokens"} if status == "incomplete" else None,
+        "output":[] if status == "incomplete" else [{"type":"message","content":[{"type":"output_text","text":text}]}],
+        "usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,
+                 "input_tokens_details":{"cached_tokens":4}}})
 
 
 @pytest.mark.parametrize("provider",["gemini","deepseek"])
@@ -49,7 +56,9 @@ async def test_native_api_contract_cache_and_usage(tmp_path, provider):
             assert body["generationConfig"]["responseMimeType"]=="application/json"
         else:
             assert request.headers["authorization"]=="Bearer DEEPSEEK_TEST_ONLY"
-            assert body["response_format"]=={"type":"json_object"}
+            assert request.url.path=="/responses"
+            assert body["text"]["format"]["type"]=="json_schema"
+            assert body["text"]["format"]["schema"]["required"]==["answer"]
         return response(provider)
     store, job, models=setup(tmp_path,handler)
     try:
@@ -58,6 +67,7 @@ async def test_native_api_contract_cache_and_usage(tmp_path, provider):
             assert result.answer=="ok"
         assert len(requests)==1
         assert store.usage(job)["total_tokens"]==(35 if provider=="gemini" else 30)
+        assert store.usage(job)["cached_input_tokens"]==(0 if provider=="gemini" else 4)
         assert all("TEST_ONLY" not in p.read_text() for p in (store.directory(job)/"cache").glob("*.json"))
     finally:
         await models.close()
@@ -99,7 +109,7 @@ async def test_paid_response_is_revalidated_after_a_local_validator_fix(tmp_path
 async def test_truncation_increases_output_and_never_accepts_partial(tmp_path):
     limits=[]
     def handler(request):
-        limits.append(json.loads(request.content)["max_tokens"])
+        limits.append(json.loads(request.content)["max_output_tokens"])
         return response(reason="length" if len(limits)==1 else "stop")
     store,job,models=setup(tmp_path,handler)
     try:
@@ -170,6 +180,24 @@ async def test_gemini_schema_rejection_uses_json_mode_with_full_local_contract(t
         assert "responseJsonSchema" not in bodies[1]["generationConfig"]
         assert bodies[1]["generationConfig"]["responseMimeType"]=="application/json"
         assert any("JSON Schema" in p.get("text","") for p in bodies[1]["contents"][0]["parts"])
+        assert store.usage(job)["calls"]==2
+    finally:
+        await models.close()
+
+
+async def test_deepseek_structured_output_falls_back_once_to_chat_json(tmp_path):
+    bodies=[]
+    def handler(request):
+        body=json.loads(request.content); bodies.append((request.url.path,body))
+        if len(bodies)==1:
+            return httpx.Response(404)
+        assert body["response_format"]=={"type":"json_object"}
+        assert "JSON Schema" not in body["messages"][1]["content"]
+        return response("deepseek-chat")
+    store,job,models=setup(tmp_path,handler)
+    try:
+        assert (await models.json("deepseek","test","JSON","prompt",Answer)).answer=="ok"
+        assert [path for path,_ in bodies]==["/responses","/chat/completions"]
         assert store.usage(job)["calls"]==2
     finally:
         await models.close()

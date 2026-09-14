@@ -6,11 +6,13 @@ import re
 import shutil
 import subprocess
 import textwrap
+import uuid
 import zipfile
 from pathlib import Path
 
 import fitz
 import matplotlib
+from PIL import Image, ImageDraw
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -29,7 +31,7 @@ infty partial nabla cdot times div pm mp le leq ge geq neq ne approx sim simeq e
 propto to rightarrow leftarrow leftrightarrow Rightarrow Leftarrow Leftrightarrow mapsto
 longrightarrow longleftrightarrow implies iff in notin subset subseteq supset supseteq
 cup cap emptyset forall exists neg land lor lnot lvert rvert vert lVert rVert Vert
-langle rangle lbrace rbrace ldots cdots vdots ddots dots quad qquad hspace phantom
+langle rangle lbrace rbrace ldots cdots vdots ddots dots wedge vee quad qquad hspace phantom
 displaystyle textstyle scriptstyle scriptscriptstyle binom dbinom tbinom overset underset
 substack limits nolimits degree circ angle perp parallel ell hbar Re Im Pr
 begin end boxed cancel ce SI si mbox mathsf mathscr numberwithin
@@ -117,6 +119,15 @@ def prose(value: str) -> str:
     Handles model output such as 'Delta U', V_i and m^3 outside $...$. Only
     whitelisted TeX commands/short subscripted or exponentiated symbols qualify.
     """
+    # Braced decimal commas are TeX syntax. In a prose field the braces would be
+    # printed literally, so normalize only the unambiguous digit form locally.
+    value = re.sub(r"(?<=\d)\{,\}(?=\d)", ",", value)
+    # Models often use calculator-style powers in otherwise plain prose. Turning
+    # ``TV^(gamma-1)`` into a braced power here avoids printing a raw caret while
+    # keeping the input inside the same mathematical whitelist used everywhere.
+    value = re.sub(
+        r"\b([A-Za-z][A-Za-z0-9]{0,3}(?:_(?:\{[^{}]{1,30}\}|[A-Za-z0-9]+))?)\^\(([^()\n]{1,40})\)",
+        r"\1^{\2}", value)
     unicode_symbols = re.escape("".join(UNICODE_MATH))
     start = re.compile(r"\\{1,2}[A-Za-z]+|\b[A-Za-z]{1,3}(?=[_^])|\b\d{1,3}(?=\^)|[" + unicode_symbols + "]")
     result, last, position = [], 0, 0
@@ -152,9 +163,11 @@ def prose(value: str) -> str:
                 end = cursor
                 continue
             break
-        # Attach a following single-letter variable to a Greek/operator command.
-        if token.startswith("\\"):
-            tail = re.match(r" [A-Za-z](?![A-Za-z])", value[end:])
+        # Attach a following single-letter variable, including its indices, to a
+        # Greek/operator command (for example ``\Delta U_AB``). Without the
+        # suffix the underscore would be escaped and printed literally.
+        if token.startswith("\\") or token in UNICODE_MATH:
+            tail = re.match(r" ?[A-Za-z](?:[_^](?:\{[^{}]{1,40}\}|[A-Za-z0-9]+))*(?![A-Za-z0-9])", value[end:])
             if tail:
                 end += len(tail.group())
         candidate = value[match.start():end]
@@ -186,9 +199,59 @@ def validate_lesson_math(lesson: Lesson):
     walk(lesson.model_dump())
 
 
+def _split_top_level(value: str, separators: tuple[str, ...]) -> list[str]:
+    """Split TeX only outside braced groups; used for safe display line breaks."""
+    parts, start, depth, cursor = [], 0, 0, 0
+    while cursor < len(value):
+        char = value[cursor]
+        if char == "{" and (cursor == 0 or value[cursor - 1] != "\\"):
+            depth += 1
+        elif char == "}" and (cursor == 0 or value[cursor - 1] != "\\"):
+            depth = max(0, depth - 1)
+        if depth == 0:
+            separator = next((item for item in separators if value.startswith(item, cursor)), None)
+            if separator:
+                part = value[start:cursor].strip()
+                if part:
+                    parts.append(part)
+                cursor += len(separator)
+                start = cursor
+                continue
+        cursor += 1
+    tail = value[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def wrap_display_math(value: str, target_length: int = 105) -> str:
+    """Break long equations before adjustbox would shrink them to tiny text.
+
+    Semicolon/comma-separated balances are independent mathematical statements.
+    Equality chains can continue on a new centered row without changing meaning.
+    Existing explicit math environments are preserved verbatim.
+    """
+    value = safe_math(value)
+    if len(value) <= target_length or r"\begin{" in value:
+        return value
+    components = _split_top_level(value, (r";\qquad", r";\quad", r",\qquad", r",\quad", ";", r"\qquad"))
+    lines: list[str] = []
+    for component in components:
+        equalities = _split_top_level(component, ("=",))
+        if len(component) > target_length and len(equalities) >= 3:
+            lines.append(equalities[0] + "=" + equalities[1])
+            lines.extend("{}=" + item for item in equalities[2:])
+        else:
+            lines.append(component)
+    if len(lines) < 2:
+        return value
+    wrapped = r"\begin{gathered}" + r"\\".join(lines) + r"\end{gathered}"
+    return safe_math(wrapped)
+
+
 def display(value: str) -> str:
     return (r"\begin{center}\begin{adjustbox}{max width=\linewidth}$\displaystyle "
-            + safe_math(value) + r"$\end{adjustbox}\end{center}" + "\n")
+            + wrap_display_math(value) + r"$\end{adjustbox}\end{center}" + "\n")
 
 
 def heading(value: str) -> str:
@@ -206,21 +269,36 @@ def bullets(items: list[str], numbered=False) -> str:
     return f"\\begin{{{env}}}\n" + "\n".join(r"\item " + rich(s) for s in items) + f"\n\\end{{{env}}}\n"
 
 
+def plot_text(value: str) -> str:
+    """Render simple indices in plots without passing model-authored TeX through."""
+    value = value.replace("$", "")
+    value = re.sub(r"(?<=\d)\{,\}(?=\d)", ",", value)
+    replacements = {r"\Delta": "Δ", r"\gamma": "γ", r"\eta": "η", r"\theta": "θ", r"\mu": "μ"}
+    for source, replacement in replacements.items():
+        value = value.replace(source, replacement)
+    value = re.sub(r"\\(?:text|mathrm)\{([^{}]*)\}", r"\1", value)
+    value = value.replace("{", "").replace("}", "").replace("\\", "")
+    value = re.sub(r"\b([A-Za-z])_([A-Za-z0-9]{1,12})\b",
+                   lambda match: f"${match.group(1)}_{{\\mathrm{{{match.group(2)}}}}}$", value)
+    return value
+
+
 def render_charts(lesson: Lesson, assets: Path, prefix: str) -> list[Path]:
     assets.mkdir(exist_ok=True, parents=True)
     paths = []
     with plt.rc_context({"font.size": 11, "axes.spines.top": False, "axes.spines.right": False,
-                         "text.parse_math": False, "axes.prop_cycle": plt.cycler(color=["#177e89", "#ba5b3b", "#7354a0", "#496d43", "#b2902e", "#264d77"])}):
+                         "text.parse_math": True, "axes.prop_cycle": plt.cycler(color=["#177e89", "#ba5b3b", "#7354a0", "#496d43", "#b2902e", "#264d77"])}):
         for i, chart in enumerate(lesson.charts):
             fig, ax = plt.subplots(figsize=(7.6, 4.6), layout="constrained")
             try:
                 for series in chart.series:
                     if chart.kind == "line":
-                        ax.plot(series.x, series.y, label=textwrap.fill(series.label, 34), linewidth=2)
+                        ax.plot(series.x, series.y, label=plot_text(textwrap.fill(series.label, 34)), linewidth=2)
                     else:
-                        ax.scatter(series.x, series.y, label=textwrap.fill(series.label, 34), s=28)
-                ax.set(xlabel=textwrap.fill(chart.xlabel, 75), ylabel=textwrap.fill(chart.ylabel, 55))
-                ax.set_title(textwrap.fill(chart.title, 70), loc="left", pad=16, weight="bold")
+                        ax.scatter(series.x, series.y, label=plot_text(textwrap.fill(series.label, 34)), s=28)
+                ax.set(xlabel=plot_text(textwrap.fill(chart.xlabel, 75)),
+                       ylabel=plot_text(textwrap.fill(chart.ylabel, 55)))
+                ax.set_title(plot_text(textwrap.fill(chart.title, 70)), loc="left", pad=16, weight="bold")
                 ax.grid(alpha=0.18)
                 ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=min(2, len(chart.series)), frameon=False)
                 base = assets / f"{prefix}-chart-{i+1:02d}"
@@ -240,37 +318,92 @@ class LatexError(RuntimeError):
     pass
 
 
+def latex_failure_detail(folder: Path, stdout: str) -> str:
+    """Extract the first actionable compiler error and its local source lines."""
+    log_path = folder / "dispensa.log"
+    log = log_path.read_text(errors="replace") if log_path.exists() else ""
+    combined = stdout + "\n" + log
+    lines = combined.splitlines()
+    errors = [index for index, line in enumerate(lines)
+              if "dispensa.tex:" in line or line.startswith("!")]
+    start = errors[0] if errors else max(0, len(lines) - 18)
+    diagnostic = "\n".join(lines[max(0, start - 1):start + 9])
+    match = re.search(r"dispensa\.tex:(\d+):", diagnostic)
+    if match:
+        source = (folder / "dispensa.tex").read_text(encoding="utf-8", errors="replace").splitlines()
+        line_number = int(match.group(1))
+        excerpt = []
+        for number in range(max(1, line_number - 2), min(len(source), line_number + 2) + 1):
+            excerpt.append(f"{number}: {source[number - 1][:500]}")
+        diagnostic += "\nContesto locale:\n" + "\n".join(excerpt)
+    return diagnostic[-3500:]
+
+
 def compile_tex(folder: Path) -> dict:
     engine = latex_engine()
     if not engine:
         raise LatexError("Manca LaTeX: installa MiKTeX (Windows) o TeX Live con XeLaTeX. Vedi README.")
     target = folder / "dispensa.pdf"
-    target.unlink(missing_ok=True)
+    # Interrupted TeX runs can leave broken .aux files. All passes run in a
+    # fresh output directory; the validated PDF replaces the public file in one
+    # atomic operation, so downloads can never observe a partial xref table.
+    staging = folder / f".latex-build-{uuid.uuid4().hex}"
+    staging.mkdir(parents=True)
+    candidate = staging / "dispensa.pdf"
+    shutil.copy2(folder / "dispensa.tex", staging / "dispensa.tex")
+    assets = folder / "assets"
+    if assets.is_dir():
+        try:
+            os.symlink(assets.resolve(), staging / "assets", target_is_directory=True)
+        except OSError:  # Windows may require elevated symlink privileges.
+            shutil.copytree(assets, staging / "assets")
     env = os.environ.copy()
     env.update({"openin_any": "p", "openout_any": "p", "shell_escape": "f"})
     # No API keys are passed to the compiler process.
     for name in list(env):
         if any(word in name.upper() for word in ("API_KEY", "TOKEN", "SECRET", "PASSWORD")):
             env.pop(name)
-    for _ in range(2):
+    try:
+        previous_signature = None
+        for pass_index in range(4):
+            try:
+                done = subprocess.run([engine, "-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error",
+                                       "-file-line-error", "dispensa.tex"],
+                                      cwd=staging, env=env, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, timeout=180)
+            except subprocess.TimeoutExpired:
+                raise LatexError("Compilazione LaTeX oltre 180 secondi: verifica installazione e pacchetti.") from None
+            if done.returncode:
+                if (staging / "dispensa.log").is_file():
+                    shutil.copy2(staging / "dispensa.log", folder / "dispensa.log")
+                detail = latex_failure_detail(folder, done.stdout.decode("utf-8", errors="replace"))
+                raise LatexError("Compilazione LaTeX fallita: " + detail)
+            # A long table of contents can change its own page count. Two fixed
+            # passes are then insufficient and leave every following page off by
+            # one. Stop as soon as references converge, with four local passes as
+            # a hard bound; this costs no API tokens.
+            signature = b"".join((staging / f"dispensa.{suffix}").read_bytes()
+                                 for suffix in ("aux", "toc", "out")
+                                 if (staging / f"dispensa.{suffix}").is_file())
+            if pass_index >= 1 and signature == previous_signature:
+                break
+            previous_signature = signature
+        if not candidate.is_file() or b"%%EOF" not in candidate.read_bytes()[-4096:]:
+            raise LatexError("LaTeX non ha prodotto un PDF completo")
         try:
-            done = subprocess.run([engine, "-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error",
-                                   "-file-line-error", "dispensa.tex"], cwd=folder, env=env,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
-        except subprocess.TimeoutExpired:
-            target.unlink(missing_ok=True)
-            raise LatexError("Compilazione LaTeX oltre 180 secondi: verifica installazione e pacchetti.") from None
-        if done.returncode:
-            target.unlink(missing_ok=True)
-            log = done.stdout.decode("utf-8", errors="replace")
-            lines = log.splitlines()
-            errors = [n for n, line in enumerate(lines) if "dispensa.tex:" in line or line.startswith("!")]
-            start = errors[-1] if errors else max(0, len(lines) - 18)
-            detail = "\n".join(lines[max(0, start-1):start+9])
-            raise LatexError("Compilazione LaTeX fallita: " + detail)
-    if not target.is_file():
-        raise LatexError("LaTeX non ha prodotto un PDF")
-    log = (folder / "dispensa.log").read_text(errors="replace")
+            with fitz.open(candidate) as document:
+                if len(document) < 1:
+                    raise LatexError("LaTeX ha prodotto un PDF privo di pagine")
+        except (fitz.FileDataError, RuntimeError):
+            raise LatexError("LaTeX ha prodotto un PDF non leggibile") from None
+        log = (staging / "dispensa.log").read_text(errors="replace")
+        os.replace(candidate, target)
+        for suffix in ("aux", "log", "out", "toc"):
+            generated = staging / f"dispensa.{suffix}"
+            if generated.is_file():
+                os.replace(generated, folder / generated.name)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     overflow = [float(x) for x in re.findall(r"Overfull \\[hv]box \(([\d.]+)pt too (?:wide|high)\)", log)]
     missing_chars = list(dict.fromkeys(re.findall(r"Missing character: (.+)", log)))
     return {"engine": Path(engine).name, "overfull_boxes": [v for v in overflow if v > 2], "missing_characters": missing_chars}
@@ -295,7 +428,7 @@ def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson
     flags = report.get("issues", [])
     status = "DIMOSTRAZIONE OFFLINE" if mode == "demo" else ("DA VERIFICARE" if flags else "REVISIONI AUTOMATICHE COMPLETATE")
     parts = [r"\begin{titlepage}\sffamily", r"{\color{accent}\Large STUDYGENIUS}\par",
-             r"\vspace{20mm}{\Huge\bfseries " + escape(title) + r"}\par",
+             r"\vspace{20mm}{\Huge\bfseries\raggedright\hyphenpenalty=10000\exhyphenpenalty=10000 " + escape(title) + r"\par}",
              r"\vspace{8mm}{\Large Dispensa ragionata per lo studio}\par",
              r"\vspace{16mm}\begin{tcolorbox}[colback=light,colframe=accent,title=" + escape(status) + "]",
              "Teoria, passaggi matematici, figure commentate ed esercizi svolti.",
@@ -324,7 +457,7 @@ def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson
             for p in section.paragraphs:
                 parts.append(rich(p) + "\n\n")
             for equation in section.equations:
-                parts.extend([r"\Needspace{12\baselineskip}\begin{tcolorbox}[breakable,colback=light,colframe=accent]", display(equation.latex),
+                parts.extend([r"\Needspace{18\baselineskip}\begin{tcolorbox}[breakable,colback=light,colframe=accent]", display(equation.latex),
                               rich(equation.explanation), bullets(equation.symbols),
                               r"\textbf{Condizioni di validità.} " + rich(equation.assumptions), r"\end{tcolorbox}"])
             for step in section.derivation:
@@ -395,6 +528,103 @@ def render_pdf_pages(pdf: Path, target: Path) -> list[Path]:
             page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False, colorspace=fitz.csRGB).save(path, jpg_quality=90)
             paths.append(path)
     return paths
+
+
+def inspect_pdf_layout(pdf: Path) -> dict:
+    """Check every page locally and select pages needing full-resolution visual review."""
+    actual_issues: list[str] = []
+    detailed_pages: set[int] = set()
+    flagged = []
+    global_min_font = None
+    with fitz.open(pdf) as document:
+        for number, page in enumerate(document, 1):
+            rect = page.rect
+            dictionary = page.get_text("dict")
+            sizes = []
+            small_character_count = 0
+            outside = 0
+            image_blocks = 0
+            has_heading = False
+            for block in dictionary.get("blocks", []):
+                if block.get("type") == 1:
+                    image_blocks += 1
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        if not span.get("text", "").strip():
+                            continue
+                        size = float(span.get("size", 0))
+                        sizes.append(size)
+                        if size < 7:
+                            small_character_count += len(span.get("text", "").strip())
+                        has_heading = has_heading or size >= 18
+                        x0, y0, x1, y1 = span.get("bbox", (0, 0, 0, 0))
+                        if x0 < rect.x0 - 1 or y0 < rect.y0 - 1 or x1 > rect.x1 + 1 or y1 > rect.y1 + 1:
+                            outside += 1
+            minimum = min(sizes) if sizes else None
+            if minimum is not None:
+                global_min_font = minimum if global_min_font is None else min(global_min_font, minimum)
+            reasons = []
+            if number in (1, len(document)):
+                reasons.append("pagina iniziale/finale")
+            if image_blocks or page.get_images(full=True):
+                reasons.append("figure")
+            if has_heading:
+                reasons.append("inizio sezione/capitolo")
+            # Normal-size mathematics contains small sub/superscript spans. Send
+            # a page for detailed review only when the base text is likely small:
+            # a very low minimum or a substantial amount of sub-7 pt content.
+            if minimum is not None and (minimum < 5.5 or small_character_count >= 60):
+                reasons.append("testo piccolo")
+            if outside:
+                reasons.append("testo oltre pagina")
+                actual_issues.append(f"Pagina {number}: {outside} frammenti testuali oltre il riquadro PDF.")
+            if minimum is not None and minimum < 5.5:
+                actual_issues.append(f"Pagina {number}: corpo minimo {minimum:.1f} pt, potenzialmente illeggibile.")
+            if reasons:
+                detailed_pages.add(number)
+                flagged.append({"page": number, "reasons": reasons,
+                                "min_font_pt": round(minimum, 2) if minimum is not None else None,
+                                "small_text_characters": small_character_count,
+                                "image_blocks": image_blocks, "outside_spans": outside})
+        total = len(document)
+    return {"pages_checked": total, "minimum_font_pt": round(global_min_font, 2) if global_min_font else None,
+            "issues": list(dict.fromkeys(actual_issues)), "detailed_pages": sorted(detailed_pages),
+            "detailed_page_metrics": flagged}
+
+
+def create_layout_review_assets(pdf: Path, target: Path, detailed_pages: list[int]) -> dict:
+    """Create all-page contact sheets plus readable renders of higher-risk pages."""
+    target.mkdir(exist_ok=True, parents=True)
+    for stale in target.glob("*.jpg"):
+        stale.unlink()
+    overview, detail = [], []
+    with fitz.open(pdf) as document:
+        thumbs = []
+        for number, page in enumerate(document, 1):
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(0.68, 0.68), alpha=False, colorspace=fitz.csRGB)
+            image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+            thumbs.append((number, image))
+            if number in detailed_pages:
+                full = page.get_pixmap(matrix=fitz.Matrix(1.45, 1.45), alpha=False, colorspace=fitz.csRGB)
+                full_image = Image.frombytes("RGB", (full.width, full.height), full.samples)
+                path = target / f"dettaglio-pagina-{number:04d}.jpg"
+                full_image.save(path, "JPEG", quality=86, optimize=True, progressive=True)
+                detail.append(path)
+        for start in range(0, len(thumbs), 9):
+            group = thumbs[start:start + 9]
+            cell_w = max(image.width for _, image in group) + 20
+            cell_h = max(image.height for _, image in group) + 48
+            sheet = Image.new("RGB", (cell_w * 3, cell_h * 3), "white")
+            draw = ImageDraw.Draw(sheet)
+            for position, (number, image) in enumerate(group):
+                column, row = position % 3, position // 3
+                x, y = column * cell_w + 10, row * cell_h + 34
+                draw.text((x, row * cell_h + 10), f"Pagina {number}", fill="black")
+                sheet.paste(image, (x, y))
+            path = target / f"panoramica-{group[0][0]:04d}-{group[-1][0]:04d}.jpg"
+            sheet.save(path, "JPEG", quality=82, optimize=True, progressive=True)
+            overview.append(path)
+    return {"overview": overview, "detail": detail}
 
 
 def source_archive(folder: Path, extra: list[Path]):

@@ -133,7 +133,15 @@ def create_app(root: Path | None = None) -> FastAPI:
         nonlocal settings
         if active_jobs():
             raise HTTPException(409, "Metti in pausa i lavori e attendi la fine della chiamata API prima di cambiare le impostazioni.")
-        values = {"gemini_model": update.gemini_model, "deepseek_model": update.deepseek_model}
+        values = {"gemini_model": update.gemini_model, "deepseek_model": update.deepseek_model,
+                  "deepseek_fast_model": update.deepseek_fast_model,
+                  "deepseek_reasoning_effort": update.deepseek_reasoning_effort,
+                  "gemini_concurrency": settings.gemini_concurrency,
+                  "deepseek_concurrency": settings.deepseek_concurrency}
+        if update.gemini_concurrency is not None:
+            values["gemini_concurrency"] = update.gemini_concurrency
+        if update.deepseek_concurrency is not None:
+            values["deepseek_concurrency"] = update.deepseek_concurrency
         for provider in ("gemini", "deepseek"):
             old = getattr(settings, f"{provider}_key").get_secret_value()
             new = getattr(update, f"{provider}_key").get_secret_value().strip()

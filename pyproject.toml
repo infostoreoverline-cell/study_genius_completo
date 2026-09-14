@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "studygenius-local"
-version = "1.0.0"
+version = "1.1.0"
 description = "Dai PDF a una dispensa universitaria: Gemini, DeepSeek e LaTeX sul tuo PC."
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "httpx[socks]>=0.28,<1",
   "pydantic>=2.9,<3", "python-multipart>=0.0.20,<1", "python-dotenv>=1.0,<2",
-  "PyMuPDF>=1.25,<2", "matplotlib>=3.9,<4", "numpy>=2,<3",
+  "PyMuPDF>=1.25,<2", "Pillow>=11,<13", "matplotlib>=3.9,<4", "numpy>=2,<3",
+  "reportlab>=4,<5",
 ]
 
 [project.optional-dependencies]

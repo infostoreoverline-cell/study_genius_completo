@@ -3,17 +3,21 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
 from . import prompts
 from .config import Settings
-from .ingest import crop_visual, ingest
-from .models import ChapterPlan, CourseGuide, EvidenceBatch, JobOptions, Lesson, Outline, PageAnalysis, Review
+from .ingest import crop_visual, ingest, render_high_fidelity_page
+from .models import (ChapterPlan, CourseGuide, EvidenceBatch, JobOptions, Lesson,
+                     LessonRepair, Outline, PageAnalysis, Review)
 from .providers import Models
-from .render import (LatexError, build_book, render_charts, render_pdf_pages,
-                     source_archive, validate_lesson_math, preflight_latex)
+from .render import (LatexError, build_book, create_layout_review_assets,
+                     inspect_pdf_layout, render_charts, source_archive,
+                     validate_lesson_math, preflight_latex)
 from .storage import Store, atomic_json, read_json
+from .vision import needs_high_fidelity
 
 
 class Paused(RuntimeError):
@@ -99,6 +103,57 @@ def source_page_context(topics, assigned_ids, max_chars=60000):
     return {"entries": entries, "complete": len(entries) == len(supporting), "total": len(supporting)}
 
 
+def lesson_sha256(lesson: Lesson) -> str:
+    canonical = json.dumps(lesson.model_dump(mode="json"), ensure_ascii=False,
+                           sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def apply_lesson_repair(lesson: Lesson, repair: LessonRepair) -> Lesson:
+    """Apply compiler repairs only to existing string leaves, then revalidate fully."""
+    expected = lesson_sha256(lesson)
+    if repair.base_sha256 != expected:
+        raise ValueError("La riparazione LaTeX non corrisponde alla versione inviata")
+    value = lesson.model_dump(mode="json")
+    seen = set()
+    for replacement in repair.replacements:
+        if replacement.field_path in seen:
+            raise ValueError("La riparazione LaTeX ripete lo stesso campo")
+        seen.add(replacement.field_path)
+        parts = [part.replace("~1", "/").replace("~0", "~")
+                 for part in replacement.field_path.removeprefix("/").split("/")]
+        node = value
+        for part in parts[:-1]:
+            if isinstance(node, list):
+                if not part.isdigit() or int(part) >= len(node):
+                    raise ValueError("Percorso di riparazione LaTeX non valido")
+                node = node[int(part)]
+            elif isinstance(node, dict) and part in node:
+                node = node[part]
+            else:
+                raise ValueError("Percorso di riparazione LaTeX non valido")
+        leaf = parts[-1]
+        if isinstance(node, list):
+            if not leaf.isdigit() or int(leaf) >= len(node) or not isinstance(node[int(leaf)], str):
+                raise ValueError("La riparazione deve sostituire un campo testuale esistente")
+            node[int(leaf)] = replacement.replacement
+        elif isinstance(node, dict) and leaf in node and isinstance(node[leaf], str):
+            node[leaf] = replacement.replacement
+        else:
+            raise ValueError("La riparazione deve sostituire un campo testuale esistente")
+    return Lesson.model_validate(value)
+
+
+def chapter_model_tier(plan: ChapterPlan, topics: dict) -> str:
+    """Reserve the reasoning model for chapters with actual mathematical complexity."""
+    assigned = [topics[topic_id] for topic_id in plan.topic_ids]
+    if any(topic.get("kind") in ("derivation", "exercise") for topic in assigned):
+        return "quality"
+    scientific_marks = sum(len(re.findall(r"[=\u221a\u222b\u2211\u2202_^]|\\(?:frac|int|sum|sqrt)",
+                                           topic.get("content", ""))) for topic in assigned)
+    return "quality" if scientific_marks >= 8 else "fast"
+
+
 class Pipeline:
     def __init__(self, store: Store, job_id: str, settings: Settings, stop: asyncio.Event):
         self.store, self.job_id, self.settings, self.stop = store, job_id, settings, stop
@@ -115,6 +170,33 @@ class Pipeline:
         self.store.update(self.job_id, stage=stage, progress=progress)
         if message:
             self.store.event(self.job_id, message)
+
+    async def parallel_map(self, items, limit, worker, on_complete=None):
+        """Run independent work concurrently while preserving result order and errors."""
+        semaphore = asyncio.Semaphore(max(1, limit))
+        completed = 0
+        lock = asyncio.Lock()
+
+        async def run_one(index, item):
+            nonlocal completed
+            async with semaphore:
+                self.check()
+                result = await worker(index, item)
+            async with lock:
+                completed += 1
+                if on_complete:
+                    on_complete(completed, len(items))
+            return index, result
+
+        results = await asyncio.gather(*(run_one(index, item) for index, item in enumerate(items)),
+                                       return_exceptions=True)
+        errors = [result for result in results if isinstance(result, BaseException)]
+        if errors:
+            raise errors[0]
+        ordered = [None] * len(items)
+        for index, result in results:
+            ordered[index] = result
+        return ordered
 
     async def run(self):
         try:
@@ -139,20 +221,45 @@ class Pipeline:
         evidence = []
         page_groups = list(bounded_groups(pages, self.options.pages_per_batch, 140000, lambda p: p.model_dump()))
         self.store.event(self.job_id, f"{len(pages)} pagine, {len(page_groups)} blocchi di lettura visiva. Nessuna pagina viene saltata.")
-        for index, batch in enumerate(page_groups):
-            self.check()
+
+        async def read_batch(index, batch):
             checkpoint = self.directory / "evidence" / f"batch-{index:04d}.json"
             expected = [p.id for p in batch]
             if checkpoint.exists():
                 result = EvidenceBatch.model_validate(read_json(checkpoint))
                 validate_evidence(result, expected)
             else:
-                self.progress(f"Gemini legge le pagine · {index+1}/{len(page_groups)}", 0.08 + 0.22*index/len(page_groups))
                 result = await self.models.json("gemini", f"Lettura blocco {index+1}", prompts.READ,
                     json.dumps({"pages": [{"page_id": p.id, "filename": p.filename, "page": p.number, "text": p.text} for p in batch]}, ensure_ascii=False),
                     EvidenceBatch, images=[self.directory / p.image for p in batch],
                     validate=lambda r: validate_evidence(r, expected), max_output=24000)
+                # Most pages use fewer pixels. If the reader explicitly reports a
+                # readability problem, only that page is rerendered and reread larger.
+                replacements = {}
+                by_page = {analysis.page_id: analysis for analysis in result.pages}
+                for page in batch:
+                    analysis = by_page[page.id]
+                    doubts = [*analysis.uncertainties,
+                              *(visual.uncertainty for visual in analysis.visuals if visual.uncertainty)]
+                    if needs_high_fidelity(doubts):
+                        high = await asyncio.to_thread(render_high_fidelity_page, self.directory, page)
+                        reread = await self.models.json("gemini", f"Rilettura alta definizione {page.id}", prompts.READ,
+                            json.dumps({"pages": [{"page_id": page.id, "filename": page.filename,
+                                                   "page": page.number, "text": page.text}],
+                                        "previous_analysis": analysis.model_dump(),
+                                        "focus": "Rileggi etichette, simboli e valori segnalati come poco leggibili."},
+                                       ensure_ascii=False), EvidenceBatch, images=[high],
+                            validate=lambda r, page_id=page.id: validate_evidence(r, [page_id]), max_output=24000)
+                        replacements[page.id] = reread.pages[0]
+                if replacements:
+                    result = EvidenceBatch(pages=[replacements.get(page.page_id, page) for page in result.pages])
                 atomic_json(checkpoint, result.model_dump())
+            return result
+
+        self.progress("Lettura multimodale parallela", 0.08)
+        batches = await self.parallel_map(page_groups, self.settings.gemini_concurrency, read_batch,
+            lambda done, total: self.progress(f"Gemini legge le pagine · {done}/{total}", 0.08 + 0.22*done/total))
+        for result in batches:
             evidence.extend(result.pages)
         # Restore original page order even when the model returned pages in a different order.
         order = {p.id: i for i, p in enumerate(pages)}
@@ -173,10 +280,15 @@ class Pipeline:
         else:
             plans = []
             inventories = [{"id": key, "title": value["title"], "kind": value["kind"]} for key, value in topics.items()]
-            for index, batch in enumerate(bounded_groups(inventories, 100, 70000)):
-                outline = await self.models.json("deepseek", f"Indice {index+1}", prompts.PLAN,
+            inventory_groups = list(bounded_groups(inventories, 100, 70000))
+
+            async def plan_batch(index, batch):
+                return await self.models.json("deepseek", f"Indice {index+1}", prompts.PLAN,
                     json.dumps({"exam_brief": self.options.exam_brief, "topics": batch}, ensure_ascii=False), Outline,
-                    validate=lambda r: validate_outline(r, [t["id"] for t in batch]))
+                    validate=lambda r: validate_outline(r, [t["id"] for t in batch]), tier="fast")
+
+            outlines = await self.parallel_map(inventory_groups, self.settings.deepseek_concurrency, plan_batch)
+            for outline in outlines:
                 for plan in outline.chapters:
                     # Bound writing context independently of how the planner groups topics.
                     groups = list(bounded_groups(plan.topic_ids, 10, 60000, lambda t: topics[t]))
@@ -192,10 +304,13 @@ class Pipeline:
         if guide_file.exists():
             self.course_guide = CourseGuide.model_validate(read_json(guide_file))
         else:
-            guides = []
-            for batch in bounded_groups(list(topics.items()), 100, 80000):
-                guides.append(await self.models.json("gemini", "Convenzioni del corso", prompts.GUIDE,
-                    json.dumps(dict(batch), ensure_ascii=False), CourseGuide, max_output=8000))
+            guide_groups = list(bounded_groups(list(topics.items()), 100, 80000))
+
+            async def guide_batch(index, batch):
+                return await self.models.json("gemini", "Convenzioni del corso", prompts.GUIDE,
+                    json.dumps(dict(batch), ensure_ascii=False), CourseGuide, max_output=8000)
+
+            guides = await self.parallel_map(guide_groups, self.settings.gemini_concurrency, guide_batch)
             merged = {key: list(dict.fromkeys(item for guide in guides for item in getattr(guide, key)))
                       for key in ("conventions", "symbols", "conflicts")}
             if len(json.dumps(merged)) > 40000 or len(guides) > 1:
@@ -217,19 +332,22 @@ class Pipeline:
             visual_assignments[owner].append(visual_id)
         assets = {}
         from .models import SourceVisual
-        for visual_id, value in visuals.items():
-            self.check()
+
+        async def prepare_visual(index, item):
+            visual_id, value = item
             page = page_map[value["page_id"]]
             target = self.directory / "visuals" / f"{visual_id}.png"
             visual = SourceVisual.model_validate({k: v for k, v in value.items() if k != "page_id"})
             await asyncio.to_thread(crop_visual, self.directory, page, visual, target)
-            assets[visual_id] = {"path": str(target), "title": value["title"],
-                                 "reference": f"{page.document}, p. {page.number}"}
+            return visual_id, {"path": str(target), "title": value["title"],
+                               "reference": f"{page.document}, p. {page.number}"}
+
+        prepared = await self.parallel_map(list(visuals.items()), min(4, max(1, len(visuals))), prepare_visual)
+        assets.update(dict(prepared))
         documents = read_json(self.directory / "inputs.json")
-        lessons, reviews = [], []
-        for index, plan in enumerate(plans):
-            self.check()
-            self.progress(f"Capitolo {index+1}/{len(plans)} · scrittura e revisione", 0.34 + 0.46*index/len(plans), plan.title)
+
+        async def produce_chapter(index, plan):
+            self.store.event(self.job_id, f"Avvio capitolo {index+1}/{len(plans)}: {plan.title}")
             chapter_dir = self.directory / "chapters" / f"C{index+1:03d}"
             chapter_dir.mkdir(parents=True, exist_ok=True)
             final = chapter_dir / "final.json"
@@ -241,18 +359,38 @@ class Pipeline:
             else:
                 lesson, review = await self.chapter(index, plan, chapter_dir, topics, visuals, visual_ids, page_map, assets, refs, documents)
                 atomic_json(final, {"lesson": lesson.model_dump(), "review": review.model_dump(), "guide_digest": guide_digest})
-            lessons.append(lesson)
-            reviews.append(review)
+            return lesson, review
+
+        self.progress("Scrittura e revisione parallela dei capitoli", 0.34)
+        chapter_results = await self.parallel_map(plans, self.settings.deepseek_concurrency, produce_chapter,
+            lambda done, total: self.progress(f"Capitoli completati · {done}/{total}", 0.34 + 0.46*done/total))
+        lessons = [result[0] for result in chapter_results]
+        reviews = [result[1] for result in chapter_results]
         self.progress("Verifica del programma d'esame", 0.81)
         audit_reviews = []
         # Hierarchical audit: an exhaustive inventory is provided in bounded batches. A final
         # syllabus audit uses all chapter titles/objectives without the lengthy source text.
-        catalog = [{"chapter": p.title, "objectives": p.objectives,
-                    "topics": [topics[t]["title"] for t in p.topic_ids]} for p in plans]
+        def coverage_evidence(lesson):
+            candidates = [paragraph for section in lesson.sections for paragraph in section.paragraphs]
+            pattern = re.compile(r"piston|cilindr|sorgent|diaterm|adiabatic|isolament|paret", re.IGNORECASE)
+            return [text[:700] for text in candidates if pattern.search(text)][:10]
+
+        # Section titles and short supporting excerpts let the audit judge what
+        # was actually written. Auditing only planner topic names produced false
+        # omissions and then caused needless rewrite/review cycles.
+        catalog = [{"chapter": plan.title, "objectives": plan.objectives,
+                    "topics": [topics[t]["title"] for t in plan.topic_ids],
+                    "section_titles": [section.title for section in lesson.sections],
+                    "recap": lesson.recap,
+                    "supporting_excerpts": coverage_evidence(lesson)}
+                   for plan, lesson in zip(plans, lessons)]
         catalog_text = json.dumps(catalog, ensure_ascii=False)
         if len(catalog_text) <= 180000:
             audit = await self.models.json("gemini", "Copertura del programma", prompts.AUDIT,
-                json.dumps({"exam_brief": self.options.exam_brief, "catalog": catalog}, ensure_ascii=False), Review)
+                json.dumps({"exam_brief": self.options.exam_brief, "catalog": catalog,
+                            "document_structure": {"appendices": [
+                                "Risposte al richiamo attivo: ogni domanda dei capitoli è seguita dalla sua risposta motivata.",
+                                "Fonti e tracciabilità dei documenti caricati."]}}, ensure_ascii=False), Review)
             audit_reviews.append(audit.model_dump())
         else:
             audit_reviews.append({"passed": False, "issues": [{"severity": "major", "message":
@@ -268,26 +406,57 @@ class Pipeline:
         report["layout"] = diagnostics
         self.add_layout_issues(report, diagnostics)
         self.check()
-        # Review the rendered pages, not merely the markup. All pages are checked in small batches.
-        images = await asyncio.to_thread(render_pdf_pages, output / "dispensa.pdf", self.directory / "layout")
+        # The compiler and a local geometry pass inspect every page. Gemini receives
+        # compact all-page contact sheets, then full-size copies of pages with figures,
+        # small type or structural boundaries. This retains complete coverage without
+        # paying for a high-resolution multimodal call for every ordinary text page.
+        layout_scan = await asyncio.to_thread(inspect_pdf_layout, output / "dispensa.pdf")
+        report["local_layout_scan"] = layout_scan
+        report["issues"].extend(layout_scan["issues"])
+        review_assets = await asyncio.to_thread(create_layout_review_assets, output / "dispensa.pdf",
+                                                self.directory / "layout", layout_scan["detailed_pages"])
+        review_jobs = []
+        for batch in bounded_groups(review_assets["overview"], 2, 10000, lambda path: str(path)):
+            review_jobs.append(("panoramica", batch))
+        for batch in bounded_groups(review_assets["detail"], 4, 10000, lambda path: str(path)):
+            review_jobs.append(("dettaglio", batch))
+
+        async def review_layout(index, item):
+            kind, batch = item
+            if kind == "panoramica":
+                instruction = ("Sei il revisore dell'impaginazione. Ogni immagine è una tavola numerata che copre tutte "
+                    "le pagine indicate. Controlla struttura, pagine vuote, blocchi tagliati, sovrapposizioni, figure "
+                    "fuori margine e discontinuità evidenti. Il testo minuto della tavola non va revisionato parola per parola.")
+            else:
+                instruction = ("Sei il revisore dell'impaginazione. Controlla in dettaglio queste pagine selezionate "
+                    "localmente perché contengono figure, testo piccolo o confini strutturali: leggibilità, formule "
+                    "tagliate, glifi mancanti, sovrapposizioni e didascalie separate.")
+            system = (prompts.COMMON + "\n" + instruction +
+                " Valuta solo difetti visivi osservabili; non certificare la correttezza scientifica. "
+                "passed=true se non vi sono difetti major/blocker.")
+            review = await self.models.json("gemini", f"Impaginazione ottimizzata {kind} {index+1}", system,
+                json.dumps({"kind": kind, "files": [path.stem for path in batch],
+                            "local_checks": {"pages_checked": layout_scan["pages_checked"],
+                                             "minimum_font_pt": layout_scan["minimum_font_pt"]}}, ensure_ascii=False),
+                Review, images=batch)
+            return {"kind": kind, "files": [path.name for path in batch], "review": review}
+
+        self.progress("Controllo visivo gerarchico del PDF", 0.9)
+        reviewed = await self.parallel_map(review_jobs, self.settings.gemini_concurrency, review_layout,
+            lambda done, total: self.progress(f"Controllo visivo · {done}/{total}", 0.9 + 0.07*done/total))
         layout_reviews = []
-        for index, batch in enumerate(bounded_groups(images, 4, 10000, lambda p: str(p))):
-            self.progress(f"Controllo visivo del PDF · pagine {index*4+1}-{index*4+len(batch)}", 0.9 + 0.07*index/max(1, (len(images)+3)//4))
-            layout_review = await self.models.json("gemini", f"Impaginazione {index+1}", prompts.COMMON +
-                "\nSei il revisore dell'impaginazione. Controlla queste pagine renderizzate: testo e formule tagliati, "
-                "sovrapposizioni, glifi mancanti, figure illeggibili, didascalie separate in modo incomprensibile. "
-                "Valuta solo difetti visivi osservabili; non certificare la correttezza scientifica. "
-                "passed=true se non vi sono difetti major/blocker. Usa lo schema Review.",
-                "Immagini delle pagine finali del documento: " + ", ".join(p.stem for p in batch), Review, images=batch)
-            layout_reviews.append(layout_review.model_dump())
+        for item in reviewed:
+            layout_review = item["review"]
+            layout_reviews.append({"kind": item["kind"], "files": item["files"], **layout_review.model_dump()})
             if not layout_review.accepted:
-                report["issues"].append(f"Impaginazione pagine {index*4+1}-{index*4+len(batch)}: revisione visiva da completare.")
-                report["issues"].extend(i.message for i in layout_review.issues)
+                report["issues"].append("Impaginazione " + ", ".join(item["files"]) + ": revisione visiva da completare.")
+                report["issues"].extend(issue.message for issue in layout_review.issues)
         report["layout_reviews"] = layout_reviews
         # If late layout checks add flags, make them visible in the delivered PDF. The body
         # content remains the reviewed version; new front matter is not falsely marked reviewed.
         report["issues"] = list(dict.fromkeys(report["issues"]))
-        report["layout_review_scope"] = "Tutte le pagine della versione sottoposta al revisore visivo."
+        report["layout_review_scope"] = ("Tutte le pagine controllate localmente e mostrate in panoramiche numerate; "
+                                         f"{len(layout_scan['detailed_pages'])} pagine a rischio controllate anche a piena risoluzione.")
         if report["issues"] != printed_issues:
             report["reviewed_layout"] = diagnostics
             report["layout"] = await asyncio.to_thread(build_book, output, self.options.title, [p.model_dump() for p in plans],
@@ -296,52 +465,116 @@ class Pipeline:
             report["layout_review_scope"] += " L'elenco iniziale dei rilievi è stato aggiornato dopo la revisione; la versione finale è ricompilata e controllata dal compilatore, senza un secondo giro visivo."
             self.add_layout_issues(report, report["layout"])
             report["issues"] = list(dict.fromkeys(report["issues"]))
+        # Re-scan the exact deliverable, including any enlarged front matter. This
+        # is local and cheap; it avoids reporting geometry from the pre-update PDF.
+        final_scan = await asyncio.to_thread(inspect_pdf_layout, output / "dispensa.pdf")
+        report["final_local_layout_scan"] = final_scan
+        unseen_local_issues = [issue for issue in final_scan["issues"] if issue not in report["issues"]]
+        if unseen_local_issues:
+            report["issues"].extend(unseen_local_issues)
+            report["issues"] = list(dict.fromkeys(report["issues"]))
+            report["layout"] = await asyncio.to_thread(build_book, output, self.options.title,
+                [p.model_dump() for p in plans], lessons, assets, refs, documents, report)
+            self.add_layout_issues(report, report["layout"])
+            report["issues"] = list(dict.fromkeys(report["issues"]))
+            report["final_local_layout_scan"] = await asyncio.to_thread(
+                inspect_pdf_layout, output / "dispensa.pdf")
         await self.finish(output, report, plans, lessons)
 
     async def chapter(self, index, plan, folder, topics, visuals, visual_ids, page_map, assets, refs, documents):
-        context = {"exam_brief": self.options.exam_brief, "plan": plan.model_dump(),
+        # Common, potentially cacheable content stays at the beginning. Both Gemini
+        # implicit caching and DeepSeek disk caching match repeated request prefixes.
+        context = {"exam_brief": self.options.exam_brief,
                    "course_guide": self.course_guide.model_dump(), "course_outline": self.course_outline,
+                   "source_visual_catalog": source_visual_catalog(visuals),
+                   "plan": plan.model_dump(),
                    "topics": {t: topics[t] for t in plan.topic_ids},
                    "source_page_context": source_page_context(topics, plan.topic_ids),
-                   "source_visual_catalog": source_visual_catalog(visuals),
                    "visuals": {v: visuals[v] for v in visual_ids}}
-        source_images = [self.directory / page_map[p].image for p in sorted({topics[t]["page_id"] for t in plan.topic_ids})]
+        reviewed_page_ids = sorted({topics[t]["page_id"] for t in plan.topic_ids})
+        # For born-digital pages, raw extracted text is cheaper and sharper than
+        # resending a full-page raster. Scans stay attached; figure crops stay attached.
+        raw_source_text = {page_id: getattr(page_map[page_id], "text", "") for page_id in reviewed_page_ids}
+        source_images = [self.directory / page_map[page_id].image for page_id in reviewed_page_ids
+                         if len(getattr(page_map[page_id], "text", "").strip()) < 160]
         feedback = None
         last_lesson = None
+        initial_tier = chapter_model_tier(plan, topics)
         for attempt in range(self.options.review_rounds + 1):
             self.check()
             content = json.dumps(context, ensure_ascii=False)
             if feedback:
                 content += "\nCorreggi questa versione precedente conservando tutto ciò che è corretto:\n"
                 content += last_lesson.model_dump_json() + "\nProblemi da risolvere:\n" + json.dumps(feedback, ensure_ascii=False)
-            lesson = await self.models.json("deepseek", f"Capitolo {index+1}, stesura {attempt+1}", prompts.WRITE,
-                content, Lesson, validate=lambda r: validate_chapter_lesson(r, plan.topic_ids, visual_ids, visuals), max_output=32000)
+            draft_file = folder / f"draft-{attempt}.json"
+            lesson = None
+            if draft_file.exists():
+                try:
+                    lesson = Lesson.model_validate(read_json(draft_file))
+                    validate_chapter_lesson(lesson, plan.topic_ids, visual_ids, visuals)
+                    self.store.event(self.job_id,
+                        f"Capitolo {index+1}: riprendo la bozza locale già generata senza una nuova chiamata.")
+                except (ValueError, KeyError):
+                    lesson = None
+            if lesson is None:
+                tier = "quality" if feedback or initial_tier == "quality" else "fast"
+                lesson = await self.models.json("deepseek", f"Capitolo {index+1}, stesura {attempt+1}", prompts.WRITE,
+                    content, Lesson, validate=lambda r: validate_chapter_lesson(r, plan.topic_ids, visual_ids, visuals),
+                    max_output=32000, tier=tier)
             last_lesson = lesson
-            atomic_json(folder / f"draft-{attempt}.json", lesson.model_dump())
-            self.progress(f"Capitolo {index+1} · verifica formule e grafici ({attempt+1})", 0.34 + 0.46*index/max(1, len(read_json(self.directory / "outline.json"))))
+            atomic_json(draft_file, lesson.model_dump())
+            self.store.update(self.job_id, stage=f"Capitolo {index+1} · verifica formule e grafici ({attempt+1})")
             try:
-                preview_diagnostics = await asyncio.to_thread(build_book, folder / "preview", lesson.title, [plan.model_dump()],
-                    [lesson], assets, refs, documents, {"issues": ["Anteprima di lavoro"]})
+                lesson, preview_diagnostics = await self.compile_preview_with_repair(
+                    index, attempt, plan, lesson, folder, topics, visuals, visual_ids, assets, refs, documents)
             except LatexError as exc:
                 if attempt == self.options.review_rounds:
                     raise
                 feedback = {"latex_error": str(exc)[-2500:], "instruction": "Correggi la sintassi matematica segnalata senza omettere contenuti."}
                 self.store.event(self.job_id, f"Capitolo {index+1}: correggo un errore di compilazione LaTeX.")
                 continue
+            last_lesson = lesson
+            atomic_json(folder / f"draft-{attempt}.json", lesson.model_dump())
             chart_images = await asyncio.to_thread(render_charts, lesson, folder / "plots", f"C{index+1:03d}")
-            review_context = {**context, "lesson": lesson.model_dump(), "latex_diagnostics": preview_diagnostics,
-                              "source_visual_catalog": source_visual_catalog(visuals),
-                              "reviewed_page_ids": sorted({topics[t]["page_id"] for t in plan.topic_ids})}
+            review_context = {"exam_brief": self.options.exam_brief,
+                              "course_guide": self.course_guide.model_dump(),
+                              "source_visual_catalog": context["source_visual_catalog"],
+                              "plan": plan.model_dump(),
+                              "topics": context["topics"], "source_page_context": context["source_page_context"],
+                              "visuals": context["visuals"], "raw_source_text": raw_source_text,
+                              "lesson": lesson.model_dump(), "latex_diagnostics": preview_diagnostics,
+                              "reviewed_page_ids": reviewed_page_ids}
             review_images = [*source_images, *[Path(assets[v]["path"]) for v in visual_ids], *chart_images]
-            # Each part checks the full textual evidence. Split only image payloads to stay bounded.
-            partial_reviews = []
-            for part_index, image_group in enumerate(bounded_groups(review_images, 8, 10000, lambda p: str(p))):
-                partial_reviews.append(await self.models.json("gemini", f"Revisione capitolo {index+1}.{attempt+1}.{part_index+1}",
-                    prompts.REVIEW, json.dumps(review_context, ensure_ascii=False), Review, images=image_group, max_output=16000))
-            review = Review(passed=all(r.accepted for r in partial_reviews),
-                coverage=min(r.coverage for r in partial_reviews), correctness=min(r.correctness for r in partial_reviews),
-                clarity=min(r.clarity for r in partial_reviews), issues=[i for r in partial_reviews for i in r.issues])
-            atomic_json(folder / f"review-{attempt}.json", review.model_dump())
+            review_file = folder / f"review-{attempt}.json"
+            saved_review = None
+            if review_file.exists():
+                try:
+                    checkpoint = read_json(review_file)
+                    # A review is reusable only for the exact lesson it judged.
+                    # Older unbound Review files are ignored unless final.json
+                    # already made the whole chapter independently resumable.
+                    if checkpoint.get("lesson_sha256") == lesson_sha256(lesson):
+                        saved_review = Review.model_validate(checkpoint["review"])
+                except (ValueError, KeyError, AttributeError):
+                    saved_review = None
+            image_groups = list(bounded_groups(review_images, 12, 16000, lambda path: str(path))) or [[]]
+
+            async def review_part(part_index, image_group):
+                return await self.models.json("gemini", f"Revisione capitolo {index+1}.{attempt+1}.{part_index+1}",
+                    prompts.REVIEW, json.dumps(review_context, ensure_ascii=False), Review,
+                    images=image_group, max_output=16000)
+
+            if saved_review:
+                review = saved_review
+                self.store.event(self.job_id,
+                    f"Capitolo {index+1}: riuso la revisione locale completata.")
+            else:
+                partial_reviews = await self.parallel_map(image_groups, self.settings.gemini_concurrency, review_part)
+                review = Review(passed=all(r.accepted for r in partial_reviews),
+                    coverage=min(r.coverage for r in partial_reviews), correctness=min(r.correctness for r in partial_reviews),
+                    clarity=min(r.clarity for r in partial_reviews), issues=[i for r in partial_reviews for i in r.issues])
+                atomic_json(review_file, {"lesson_sha256": lesson_sha256(lesson),
+                                          "review": review.model_dump()})
             if review.accepted or attempt == self.options.review_rounds:
                 return lesson, review
             feedback = review.model_dump()
@@ -356,6 +589,35 @@ class Pipeline:
                 await asyncio.to_thread(crop_visual, self.directory, page_map[value["page_id"]], full, Path(assets[visual_id]["path"]))
             self.store.event(self.job_id, f"Capitolo {index+1}: DeepSeek corregge i rilievi di Gemini ({attempt+1}/{self.options.review_rounds}).")
         raise RuntimeError("Nessuna versione del capitolo completata")
+
+    async def compile_preview_with_repair(self, index, attempt, plan, lesson, folder, topics,
+                                          visuals, visual_ids, assets, refs, documents):
+        """Compile first; on failure ask the fast text model for narrow field replacements."""
+        current = lesson
+        last_error = None
+        for repair_round in range(3):
+            try:
+                diagnostics = await asyncio.to_thread(build_book, folder / "preview", current.title,
+                    [plan.model_dump()], [current], assets, refs, documents, {"issues": ["Anteprima di lavoro"]})
+                return current, diagnostics
+            except LatexError as exc:
+                last_error = exc
+                if repair_round == 2:
+                    break
+                digest = lesson_sha256(current)
+                payload = {"base_sha256": digest, "compiler_diagnostic": str(exc)[-3500:],
+                           "lesson": current.model_dump(mode="json")}
+                repair = await self.models.json("deepseek",
+                    f"Capitolo {index+1}, riparazione LaTeX {attempt+1}.{repair_round+1}",
+                    prompts.LATEX_REPAIR, json.dumps(payload, ensure_ascii=False), LessonRepair,
+                    validate=lambda value, base=current: apply_lesson_repair(base, value),
+                    max_output=6000, tier="fast")
+                current = apply_lesson_repair(current, repair)
+                validate_chapter_lesson(current, plan.topic_ids, visual_ids, visuals)
+                atomic_json(folder / f"draft-{attempt}-latex-{repair_round+1}.json", current.model_dump())
+                self.store.event(self.job_id,
+                    f"Capitolo {index+1}: applicata una correzione LaTeX testuale; ricompilo localmente.")
+        raise last_error
 
     def report(self, pages, evidence, topics, visuals, plans, lessons, reviews, audits):
         issues = []
@@ -395,8 +657,12 @@ class Pipeline:
     async def finish(self, output, report, plans, lessons):
         self.check()
         report["usage"] = self.store.usage(self.job_id)
+        report["cache"] = self.models.cache_stats if self.models else {}
         report["options"] = self.options.model_dump()
-        report["models"] = ({"reader_reviewer": self.settings.gemini_model, "planner_author": self.settings.deepseek_model}
+        report["models"] = ({"reader_reviewer": self.settings.gemini_model,
+                             "planner_fast": self.settings.deepseek_fast_model,
+                             "author_reasoning": self.settings.deepseek_model,
+                             "author_reasoning_effort": self.settings.deepseek_reasoning_effort}
                             if self.options.mode == "live" else {"reader_reviewer": None, "planner_author": None})
         atomic_json(output / "qualita.json", report)
         atomic_json(output / "contenuti.json", {"plans": [p.model_dump() for p in plans], "lessons": [l.model_dump() for l in lessons]})

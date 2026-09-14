@@ -1,0 +1,437 @@
+{
+  "mode": "live",
+  "issues": [
+    "Capitolo 1: Le coordinate quantitative esatte dei punti A, B, C, D non sono fornite in questo capitolo; qui si usano le temperature e il valore indicativo $S_B-S_A\\approx5{,}76\\ \\text{J/K}$ desunto dalla fonte nel piano T-S.",
+    "Capitolo 1: La fonte non assegna esercizi numerici in questo capitolo; l'esercizio risolto è dichiaratamente generato e non va attribuito alla fonte originale.",
+    "Capitolo 2: I valori tabellari sono arrotondati; piccole differenze nell'ultima cifra sono attese se si usano i valori arrotondati per i passaggi successivi invece delle relazioni esatte.",
+    "Capitolo 2: La fonte non fornisce coordinate intermedie dei rami curvi nel piano p-V; ogni lettura grafica al di fuori dei quattro stati A, B, C, D resta qualitativa.",
+    "Capitolo 2: L'entropia assoluta del gas non è determinata dai dati: si lavora con la differenza relativa $S-S_A$, scelta convenzionalmente nulla in A.",
+    "Capitolo 3: I valori numerici tabulati sono arrotondati; piccole differenze possono emergere se si usano le cifre troncate della tabella invece delle relazioni esatte con R = 8,314 J mol^-1 K^-1.",
+    "Capitolo 3: La figura del diagramma T-S è catalogata nella pagina D001-P0002, mentre in questa pagina D001-P0003 è presente la tabella degli stati. Le descrizioni geometriche del rettangolo T-S sono coerenti con i dati tabulati e con il modello.",
+    "Capitolo 3: I riferimenti bibliografici sono indicati come approfondimenti generali; non sono disponibili nella fonte i passaggi specifici da attribuire a ciascun riferimento.",
+    "Il prompt d'esame richiede che ogni domanda di richiamo abbia una risposta motivata in appendice. Sebbene l'obiettivo 2 del Capitolo 3 menzioni le risposte motivate in appendice, nell'indice delle sezioni manca una sottosezione o sezione formalmente intitolata come appendice dedicata alle risposte delle domande di richiamo.",
+    "Notazione del bilancio di lavoro: in D001-P0002 è formalizzata la convenzione IUPAC per cui il lavoro sul sistema è $w$ con $\\Delta U = q + w$ e il lavoro utile erogato è $W_{\\text{out}} = -w$, mentre nel quesito 4 in D001-P0003 compare la forma classica ciclica $\\oint \\delta Q = \\oint \\delta W$, dove $W$ denota il lavoro compiuto dal sistema verso l'esterno; è necessario evitare ambiguità distinguendo sempre $w$ (lavoro subito) da $W$ o $W_{\\text{out}}$ (lavoro erogato) [D001-P0002, D001-P0003]."
+  ],
+  "coverage": {
+    "pages_total": 3,
+    "pages_analyzed": 3,
+    "topics_total": 7,
+    "topics_in_lessons": 7,
+    "visuals_total": 3,
+    "visuals_explained": 3
+  },
+  "excluded_pages": [],
+  "topic_map": {
+    "D001-P0001-T01": {
+      "page_id": "D001-P0001",
+      "title": "Modello del ciclo di Carnot e proprietà del gas",
+      "chapter": 1
+    },
+    "D001-P0001-T02": {
+      "page_id": "D001-P0001",
+      "title": "Dati operativi del ciclo motore A-B-C-D-A",
+      "chapter": 2
+    },
+    "D001-P0002-T01": {
+      "page_id": "D001-P0002",
+      "title": "Rappresentazione del ciclo di Carnot nel piano temperatura-entropia (T-S)",
+      "chapter": 1
+    },
+    "D001-P0002-T02": {
+      "page_id": "D001-P0002",
+      "title": "Convenzioni sui segni e formulazione del primo principio",
+      "chapter": 1
+    },
+    "D001-P0003-T01": {
+      "page_id": "D001-P0003",
+      "title": "Dati termodinamici degli stati del ciclo di Carnot",
+      "chapter": 2
+    },
+    "D001-P0003-T02": {
+      "page_id": "D001-P0003",
+      "title": "Quesiti d'esame sul ciclo di Carnot",
+      "chapter": 3
+    },
+    "D001-P0003-T03": {
+      "page_id": "D001-P0003",
+      "title": "Riferimenti bibliografici e note di compilazione",
+      "chapter": 3
+    }
+  },
+  "chapter_reviews": [
+    {
+      "passed": true,
+      "coverage": 95,
+      "correctness": 96,
+      "clarity": 95,
+      "issues": [
+        {
+          "severity": "minor",
+          "target": "exercises[0].steps[3].math",
+          "message": "Nel passaggio numerico per il calcolo di $q_{CD}$ mancano le unità di misura intermedie per la costante $R$ e la temperatura $T_c$ ($8{,}314\\cdot 300\\cdot\\ln\\frac{1}{2}$), a differenza del passaggio di $q_{AB}$ dove erano indicate per esteso.",
+          "correction": "Uniformare la scrittura inserendo le unità dimensionali anche nella sostituzione intermedia: $1\\ \\text{mol}\\cdot 8{,}314\\ \\text{J mol}^{-1}\\ \\text{K}^{-1}\\cdot 300\\ \\text{K}\\cdot\\ln\\frac{1}{2} \\approx -1{,}73\\times 10^3\\ \\text{J}$."
+        },
+        {
+          "severity": "minor",
+          "target": "visuals[0].limitations",
+          "message": "La scheda descrive il grafico p-V come 'schematico e qualitativo', mentre la nota originale della fonte D001-P0001 precisa esplicitamente che 'Il diagramma e calcolato analiticamente dalle equazioni dichiarate'.",
+          "correction": "Specificare che il grafico è generato da un modello analitico esatto, pur rilevando che nel diagramma non tutti i quattro vertici riportano esplicitamente le etichette numeriche di pressione e volume sugli assi."
+        }
+      ]
+    },
+    {
+      "passed": true,
+      "coverage": 93,
+      "correctness": 96,
+      "clarity": 92,
+      "issues": [
+        {
+          "severity": "minor",
+          "target": "lesson.sections",
+          "message": "La consegna richiedeva di dedicare una sottosezione riconoscibile a ciascun singolo tratto (A-B, B-C, C-D, D-A) descrivendo lo stato iniziale/finale, il comportamento del pistone/cilindro e il contatto con le sorgenti. Nel capitolo i rami sono stati accorpati per tipologia (isoterme A-B, adiabatiche B-C e D-A, bilanci complessivi).",
+          "correction": "Riorganizzare o esplicitare nei titoli di sezione o sottosezione i quattro tratti individuali A-B, B-C, C-D, D-A, integrando la descrizione fisica del dispositivo cilindro-pistone e l'accoppiamento termico con le rispettive sorgenti per ciascun tratto."
+        },
+        {
+          "severity": "minor",
+          "target": "lesson.equations",
+          "message": "Nelle formule matematiche è stato frequentemente utilizzato il comando di spaziatura normale '\\ ' tra valore numerico e unità di misura invece dello spazio sottile '\\,' richiesto esplicitamente dalle linee guida.",
+          "correction": "Sostituire la spaziatura tra valori numerici e unità con spazi sottili (ad es. '10\\,\\mathrm{L}', '600\\,\\mathrm{K}', '498{,}84\\,\\mathrm{kPa}')."
+        }
+      ]
+    },
+    {
+      "passed": true,
+      "coverage": 98,
+      "correctness": 98,
+      "clarity": 98,
+      "issues": []
+    }
+  ],
+  "curriculum_reviews": [
+    {
+      "passed": true,
+      "coverage": 98,
+      "correctness": 98,
+      "clarity": 96,
+      "issues": [
+        {
+          "severity": "minor",
+          "target": "Capitolo 3 - Struttura delle sezioni e appendice di richiamo",
+          "message": "Il prompt d'esame richiede che ogni domanda di richiamo abbia una risposta motivata in appendice. Sebbene l'obiettivo 2 del Capitolo 3 menzioni le risposte motivate in appendice, nell'indice delle sezioni manca una sottosezione o sezione formalmente intitolata come appendice dedicata alle risposte delle domande di richiamo.",
+          "correction": "Aggiungere o esplicitare nell'indice del Capitolo 3 una sezione dedicata, ad esempio 'Appendice: risposte motivate alle domande di richiamo', affiancata a 'Riferimenti bibliografici e note di compilazione'."
+        }
+      ]
+    }
+  ],
+  "scope": "Copertura degli argomenti identificati dai modelli; non prova di assenza di omissioni semantiche.",
+  "course_guide": {
+    "conventions": [
+      "Convenzione sui segni per il calore: $q > 0$ se ricevuto (assorbito) dal gas [D001-P0002].",
+      "Convenzione sui segni per il lavoro del sistema: $w > 0$ se ricevuto (compiuto sul) gas [D001-P0002].",
+      "Formulazione del primo principio della termodinamica: $\\Delta U = q + w$ coerente con la convenzione egoistica/IUPAC [D001-P0002].",
+      "Lavoro erogato dal ciclo: definito separatamente come $W_{\\text{out}} = -w$ [D001-P0002].",
+      "Riferimento di entropia: nel piano $T$-$S$ l'ascissa è posta come riferimento relativo $S - S_A$, senza assumere entropia assoluta nulla; per lo stato iniziale $A$ si ha $S - S_A = 0\\text{ J/K}$ [D001-P0002, D001-P0003].",
+      "Relazione differenziale per trasformazioni reversibili: $\\delta q_{\\text{rev}} = T\\,\\mathrm{d}S$ [D001-P0002].",
+      "Verso di percorrenza del ciclo motore: orario ($A \\to B \\to C \\to D \\to A$) [D001-P0001, D001-P0002].",
+      "Modello di fluido: $n = 1\\text{ mol}$ di gas ideale monoatomico con $C_{V,m} = \\frac{3}{2}R$, $C_{p,m} = \\frac{5}{2}R$, $\\gamma = \\frac{5}{3}$ [D001-P0001].",
+      "Fattore di conversione dimensionale: $1\\text{ kPa}\\cdot\\text{L} = 1\\text{ J}$ [D001-P0001].",
+      "Metodologia di calcolo: i valori in tabella sono arrotondati, ma i calcoli analitici devono basarsi sulle relazioni esatte del modello [D001-P0001, D001-P0003]."
+    ],
+    "symbols": [
+      "$n$: quantità di sostanza di gas ideale [$1\\text{ mol}$] [D001-P0001].",
+      "$C_{V,m}$: capacità termica molare a volume costante [$\\frac{3}{2}R$, $\\text{J mol}^{-1}\\text{ K}^{-1}$] [D001-P0001].",
+      "$C_{p,m}$: capacità termica molare a pressione costante [$\\frac{5}{2}R$, $\\text{J mol}^{-1}\\text{ K}^{-1}$] [D001-P0001].",
+      "$\\gamma$: esponente adiabatico, definito come $C_{p,m}/C_{V,m} = 5/3$ (adimensionale) [D001-P0001].",
+      "$R$: costante universale dei gas perfetti [$8{,}314\\text{ J mol}^{-1}\\text{ K}^{-1}$] [D001-P0001].",
+      "$p$: pressione del gas, espressa in $\\text{kPa}$ [D001-P0001, D001-P0003].",
+      "$V$: volume del gas, espresso in $\\text{L}$ [D001-P0001, D001-P0003].",
+      "$T$: temperatura assoluta, espressa in $\\text{K}$ [D001-P0001, D001-P0003].",
+      "$T_h$: temperatura della sorgente calda [$600\\text{ K}$] [D001-P0001].",
+      "$T_c$: temperatura della sorgente fredda [$300\\text{ K}$] [D001-P0001].",
+      "$S$: entropia del gas [$\\text{J/K}$] [D001-P0002, D001-P0003].",
+      "$S - S_A$: entropia relativa riferita allo stato iniziale $A$ [$\\text{J/K}$] [D001-P0002, D001-P0003].",
+      "$q$: calore scambiato dal gas (positivo se assorbito) [$\\text{J}$] [D001-P0002, D001-P0003].",
+      "$w$: lavoro termodinamico scambiato dal gas (positivo se ricevuto) [$\\text{J}$] [D001-P0002, D001-P0003].",
+      "$W_{\\text{out}}$: lavoro netto erogato all'esterno dal ciclo ($W_{\\text{out}} = -w$) [$\\text{J}$] [D001-P0002, D001-P0003].",
+      "$\\Delta U$: variazione di energia interna del gas [$\\text{J}$] [D001-P0002, D001-P0003].",
+      "$\\eta$: rendimento termodinamico del ciclo motore (adimensionale) [D001-P0003]."
+    ],
+    "conflicts": [
+      "Notazione del bilancio di lavoro: in D001-P0002 è formalizzata la convenzione IUPAC per cui il lavoro sul sistema è $w$ con $\\Delta U = q + w$ e il lavoro utile erogato è $W_{\\text{out}} = -w$, mentre nel quesito 4 in D001-P0003 compare la forma classica ciclica $\\oint \\delta Q = \\oint \\delta W$, dove $W$ denota il lavoro compiuto dal sistema verso l'esterno; è necessario evitare ambiguità distinguendo sempre $w$ (lavoro subito) da $W$ o $W_{\\text{out}}$ (lavoro erogato) [D001-P0002, D001-P0003]."
+    ]
+  },
+  "layout": {
+    "engine": "xelatex",
+    "overfull_boxes": [],
+    "missing_characters": [],
+    "pages": 59,
+    "empty_pages": []
+  },
+  "local_layout_scan": {
+    "pages_checked": 59,
+    "minimum_font_pt": 5.98,
+    "issues": [],
+    "detailed_pages": [
+      1,
+      2,
+      4,
+      5,
+      17,
+      18,
+      22,
+      33,
+      38,
+      57,
+      59
+    ],
+    "detailed_page_metrics": [
+      {
+        "page": 1,
+        "reasons": [
+          "pagina iniziale/finale",
+          "inizio sezione/capitolo"
+        ],
+        "min_font_pt": 10.91,
+        "small_text_characters": 0,
+        "image_blocks": 0,
+        "outside_spans": 0
+      },
+      {
+        "page": 2,
+        "reasons": [
+          "inizio sezione/capitolo"
+        ],
+        "min_font_pt": 7.97,
+        "small_text_characters": 0,
+        "image_blocks": 0,
+        "outside_spans": 0
+      },
+      {
+        "page": 4,
+        "reasons": [
+          "inizio sezione/capitolo"
+        ],
+        "min_font_pt": 7.97,
+        "small_text_characters": 0,
+        "image_blocks": 0,
+        "outside_spans": 0
+      },
+      {
+        "page": 5,
+        "reasons": [
+          "inizio sezione/capitolo"
+        ],
+        "min_font_pt": 7.97,
+        "small_text_characters": 0,
+        "image_blocks": 0,
+        "outside_spans": 0
+      },
+      {
+        "page": 17,
+        "reasons": [
+          "figure"
+        ],
+        "min_font_pt": 7.97,
+        "small_text_characters": 0,
+        "image_blocks": 1,
+        "outside_spans": 0
+      },
+      {
+        "page": 18,
+        "reasons": [
+          "figure"
+        ],
+        "min_font_pt": 7.97,
+        "small_text_characters": 0,
+        "image_blocks": 1,
+        "outside_spans": 0
+      },
+      {
+        "page": 22,
+        "reasons": [
+          "inizio sezione/capitolo"
+        ],
+        "min_font_pt": 5.98,
+        "small_text_characters": 6,
+        "image_blocks": 0,
+        "outside_spans": 0
+      },
+      {
+        "page": 33,
+        "reasons": [
+          "figure"
+        ],
+        "min_font_pt": 7.97,
+        "small_text_characters": 0,
+        "image_blocks": 1,
+        "outside_spans": 0
+      },
+      {
+        "page": 38,
+        "reasons": [
+          "inizio sezione/capitolo"
+        ],
+        "min_font_pt": 5.98,
+        "small_text_characters": 6,
+        "image_blocks": 0,
+        "outside_spans": 0
+      },
+      {
+        "page": 57,
+        "reasons": [
+          "inizio sezione/capitolo"
+        ],
+        "min_font_pt": 7.97,
+        "small_text_characters": 0,
+        "image_blocks": 0,
+        "outside_spans": 0
+      },
+      {
+        "page": 59,
+        "reasons": [
+          "pagina iniziale/finale",
+          "inizio sezione/capitolo"
+        ],
+        "min_font_pt": 9.96,
+        "small_text_characters": 0,
+        "image_blocks": 0,
+        "outside_spans": 0
+      }
+    ]
+  },
+  "layout_reviews": [
+    {
+      "kind": "panoramica",
+      "files": [
+        "panoramica-0001-0009.jpg",
+        "panoramica-0010-0018.jpg"
+      ],
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 100,
+      "issues": []
+    },
+    {
+      "kind": "panoramica",
+      "files": [
+        "panoramica-0019-0027.jpg",
+        "panoramica-0028-0036.jpg"
+      ],
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 100,
+      "issues": []
+    },
+    {
+      "kind": "panoramica",
+      "files": [
+        "panoramica-0037-0045.jpg",
+        "panoramica-0046-0054.jpg"
+      ],
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 100,
+      "issues": []
+    },
+    {
+      "kind": "panoramica",
+      "files": [
+        "panoramica-0055-0059.jpg"
+      ],
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 98,
+      "issues": []
+    },
+    {
+      "kind": "dettaglio",
+      "files": [
+        "dettaglio-pagina-0001.jpg",
+        "dettaglio-pagina-0002.jpg",
+        "dettaglio-pagina-0004.jpg",
+        "dettaglio-pagina-0005.jpg"
+      ],
+      "passed": true,
+      "coverage": 100,
+      "correctness": 95,
+      "clarity": 98,
+      "issues": [
+        {
+          "severity": "minor",
+          "target": "dettaglio-pagina-0002",
+          "message": "Discrepanza tra i numeri di pagina riportati nell'indice e la numerazione effettiva a piè di pagina (es. 'Prima di iniziare' è indicata a pagina 2 ma reca il numero 3; Capitolo 1 è indicato a pagina 3 ma si trova a pagina 4).",
+          "correction": "Eseguire un passaggio aggiuntivo di compilazione per aggiornare l'indice (TOC) sincronizzandolo con l'effettiva numerazione delle pagine del documento."
+        }
+      ]
+    },
+    {
+      "kind": "dettaglio",
+      "files": [
+        "dettaglio-pagina-0017.jpg",
+        "dettaglio-pagina-0018.jpg",
+        "dettaglio-pagina-0022.jpg",
+        "dettaglio-pagina-0033.jpg"
+      ],
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 98,
+      "issues": [
+        {
+          "severity": "minor",
+          "target": "dettaglio-pagina-0018 / dettaglio-pagina-0033",
+          "message": "Nell'asse orizzontale del grafico T-S (p. 17) e nell'intestazione dell'ultima colonna della tabella (p. 32) la grandezza è resa come 'S - S_A' con trattino basso non formattato a pedice.",
+          "correction": "Formattare la notazione con pedice tipografico o matematico, ovvero $S - S_A$."
+        }
+      ]
+    },
+    {
+      "kind": "dettaglio",
+      "files": [
+        "dettaglio-pagina-0038.jpg",
+        "dettaglio-pagina-0057.jpg",
+        "dettaglio-pagina-0059.jpg"
+      ],
+      "passed": true,
+      "coverage": 100,
+      "correctness": 100,
+      "clarity": 100,
+      "issues": []
+    }
+  ],
+  "layout_review_scope": "Tutte le pagine controllate localmente e mostrate in panoramiche numerate; 11 pagine a rischio controllate anche a piena risoluzione.",
+  "usage": {
+    "calls": 56,
+    "input_tokens": 336130,
+    "output_tokens": 362860,
+    "total_tokens": 698990,
+    "cached_input_tokens": 512,
+    "uncached_input_tokens": 335618,
+    "uncertain_calls": 2
+  },
+  "cache": {
+    "job_hits": 0,
+    "shared_hits": 0,
+    "pending_hits": 0,
+    "writes": 8
+  },
+  "options": {
+    "title": "Il ciclo di Carnot - Comprendere ogni tratto",
+    "exam_brief": "Ciclo di Carnot per un gas ideale monoatomico: preparazione a un esame orale e scritto.\nVoglio poter ricostruire e spiegare entrambi i grafici p-V e T-S senza la slide davanti.\nScomponi esplicitamente ciascun grafico nei quattro tratti A-B, B-C, C-D, D-A, mantenendo\nle lettere della fonte. Per OGNI tratto spiega stato iniziale/finale, verso, grandezze costanti\ne variabili, scambio di calore, lavoro, energia interna ed entropia, legge matematica e\nperche la curva ha quella forma. Collega il gas/pistone/sorgente al grafico.\nMostra i passaggi delle derivate delle curve e confronta isoterma e adiabatica NELLO STESSO\nstato. Giustifica perche T-S e rettangolare e p-V no; distingui le aree nei due diagrammi.\nRisolvi integralmente tutti i quesiti della fonte con numeri, unita, segni e controlli.\nUsa la convenzione chimica: lavoro ricevuto dal sistema w positivo, Delta U = q+w;\ndefinisci separatamente W_out = -w. Dedica una sottosezione riconoscibile a ciascun tratto.\nLe integrazioni didattiche sono benvenute se dichiarate come tali. Non attribuire alla fonte\nspiegazioni che non contiene. Niente riempitivi o ripetizioni integrali tra capitoli.\nOgni formula deve avere unita in carattere dritto, spazi sottili tra valori e unita e cdot\nper i prodotti. Ogni domanda di richiamo deve avere una risposta motivata in appendice.\n",
+    "mode": "live",
+    "review_rounds": 2,
+    "max_api_calls": 60,
+    "max_total_tokens": 850000,
+    "pages_per_batch": 1
+  },
+  "models": {
+    "reader_reviewer": "gemini-3.8-flash",
+    "planner_fast": "deepseek-flash",
+    "author_reasoning": "deepseek-v4-pro",
+    "author_reasoning_effort": "high"
+  }
+}

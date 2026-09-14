@@ -6,7 +6,7 @@ L'applicazione gira localmente; i modelli vengono chiamati via Internet con i tu
 
 ![Interfaccia locale di StudyGenius](docs/images/interfaccia.png)
 
-**Guarda il risultato:** [dispensa prodotta con Gemini e DeepSeek](examples/collaudo-live.pdf) · [rapporto della prova](docs/COLLAUDO.md) · [demo senza API](examples/demo-gas-ideale.pdf).
+**Guarda il risultato:** [59 pagine sul ciclo di Carnot](examples/carnot/carnot-dispensa.pdf) · [fonte sintetica con grafici e quesiti](examples/carnot/carnot-fonte.pdf) · [rapporto della prova](docs/COLLAUDO.md) · [refactoring costi e prestazioni](docs/OTTIMIZZAZIONE.md) · [demo senza API](examples/demo-gas-ideale.pdf).
 
 ## Avvio su Windows
 
@@ -75,12 +75,12 @@ Apri http://127.0.0.1:8765. Il primo build include LaTeX e può richiedere diver
 ## Come lavora
 
 1. **Acquisizione completa.** Verifica i PDF, scarta duplicati identici, conserva i file e indicizza tutte le pagine con identificatori stabili. Non taglia il documento a un numero di pagine nascosto.
-2. **Lettura multimodale.** Ogni pagina viene inviata a Gemini come immagine, insieme al testo estratto. Funziona anche con scansioni, nei limiti della leggibilità del documento. Individua teoria, dimostrazioni, esercizi, grafici, tabelle e mappe.
-3. **Percorso di studio.** DeepSeek organizza tutti gli argomenti estratti. Un controllo deterministico verifica che nessun ID sia omesso, duplicato nell'indice o inventato. I contesti grandi sono suddivisi in blocchi, senza troncamento silenzioso.
-4. **Spiegazione approfondita.** Una guida condivisa allinea simboli, convenzioni e conflitti nelle fonti prima della scrittura. Ogni autore riceve l'indice completo e sviluppa il capitolo assegnato: paragrafi ragionati, ipotesi e unità, derivazioni con passaggi espliciti, esercizi con consegna e punti richiesti, risposte e controlli dimensionali. I casi creati per esercitarsi sono etichettati.
+2. **Lettura multimodale.** Ogni pagina viene inviata a Gemini come immagine, insieme al testo estratto. Il computer sceglie localmente una risoluzione adatta a testo digitale, formule, grafici o scansioni; un dubbio di leggibilità attiva una rilettura mirata ad alta fedeltà. Individua teoria, dimostrazioni, esercizi, grafici, tabelle e mappe.
+3. **Percorso di studio.** DeepSeek Flash organizza tutti gli argomenti estratti. Un controllo deterministico verifica che nessun ID sia omesso, duplicato nell'indice o inventato. I contesti grandi sono suddivisi in blocchi, senza troncamento silenzioso.
+4. **Spiegazione approfondita.** Una guida condivisa allinea simboli, convenzioni e conflitti nelle fonti prima della scrittura. I capitoli semplici partono dal modello veloce; derivazioni, esercizi e formule usano DeepSeek Pro. Se una revisione del percorso veloce fallisce, il tentativo successivo passa automaticamente a Pro. Ogni autore produce paragrafi ragionati, ipotesi e unità, passaggi espliciti, esercizi completi, risposte e controlli dimensionali.
 5. **Figure spiegate.** I grafici originali vengono ritagliati e riprodotti con assi, guida alla lettura, significato e limiti. Se un ritaglio è problematico, il ciclo di revisione può ripiegare sulla pagina intera. Ricostruzioni vettoriali opzionali usano solo serie numeriche dichiarate; il testo della dispensa rimane testo LaTeX. Non è un PDF fatto di SVG.
 6. **Revisione e correzione.** Gemini controlla testo e immagini contro le fonti. DeepSeek corregge i problemi, fino al numero di cicli scelto. I problemi non risolti vengono segnalati e il PDF resta **da verificare**.
-7. **Compilazione e controllo visivo.** Il sistema compila davvero con LaTeX, controlla errori, glifi mancanti e fuoriuscite dai margini, poi sottopone tutte le pagine renderizzate a Gemini per la verifica visiva.
+7. **Compilazione e controllo visivo.** Il sistema compila davvero con LaTeX. Un errore sintattico viene isolato dal log e corretto con una patch testuale economica, senza una nuova revisione multimodale. Ogni pagina passa controlli locali di margini, font e vuoti; Gemini vede panoramiche dell'intero PDF e copie dettagliate delle pagine a rischio.
 8. **Consegna.** PDF selezionabile, archivio dei sorgenti LaTeX con le figure e rapporto di qualità con riferimenti alle pagine.
 
 La metodologia completa è in [docs/METODO_DI_STUDIO.md](docs/METODO_DI_STUDIO.md), i contratti e i componenti in [docs/ARCHITETTURA.md](docs/ARCHITETTURA.md).
@@ -100,7 +100,7 @@ I file marcati **demo** usano contenuti prestabiliti. La demo verifica l'applica
 - Chiavi pubblicate in chat o in repository devono essere **revocate e sostituite**. Le chiavi fornite per il collaudo non fanno parte del codice.
 - Il traffico va alle API ufficiali `generativelanguage.googleapis.com` e `api.deepseek.com`. Non vengono usati servizi di telemetria, CDN o font remoti nell'interfaccia.
 - I PDF e i contenuti vengono inviati ai provider per svolgere il lavoro; considera le rispettive condizioni di trattamento dei dati. Il programma locale non è un'esecuzione offline dei modelli.
-- Tutti i tentativi di generazione, compresi retry e richieste interrotte, contano nel **limite di chiamate**. I consumi confermati sono registrati in SQLite. Per timeout/interruzioni il costo effettivo può essere sconosciuto.
+- Tutti i tentativi di generazione, compresi retry e richieste interrotte, contano nel **limite di chiamate**. I consumi confermati e i token di input serviti dalla cache del provider sono registrati in SQLite. Per timeout/interruzioni il costo effettivo può essere sconosciuto.
 - La **soglia token** viene controllata prima della chiamata successiva, usando il consumo già noto: una chiamata può superarla. Non è un tetto garantito in euro. I costi correnti sono quelli dei provider.
 - Al limite il lavoro si mette in pausa. Aumenta i limiti nel progetto e premi **Riprendi**; il conteggio non si azzera.
 - I file locali, le immagini delle pagine e i checkpoint possono occupare spazio consistente. Esegui backup della cartella `.studygenius` ad applicazione chiusa. Nel caso Docker esegui il backup del volume.
@@ -109,7 +109,7 @@ Limiti attuali per progetto: **30 PDF, 100 MB ciascuno, 500 MB totali, 1.500 pag
 
 ## Modelli e compatibilità
 
-Predefiniti al momento del collaudo: `gemini-3.8-flash` e `deepseek-v4-pro`. I nomi sono modificabili. La verifica nell'interfaccia interroga gli elenchi dei modelli, ma non certifica che una generazione abbia credito o quota sufficienti.
+Predefiniti: `gemini-3.8-flash`, `deepseek-flash` per indice/riparazioni e `deepseek-v4-pro` per la stesura matematica. I nomi sono modificabili. La verifica nell'interfaccia interroga gli elenchi dei modelli, ma non certifica che una generazione abbia credito o quota sufficienti.
 
 Gli schemi complessi possono essere rifiutati da alcuni endpoint Gemini: in quel caso l'adattatore riprova in modalità JSON, fornisce il contratto nel prompt e applica comunque tutta la validazione locale. Il tentativo aggiuntivo conta nel limite di chiamate.
 
@@ -117,7 +117,8 @@ Riferimenti ufficiali:
 
 - [Gemini generateContent](https://ai.google.dev/api/generate-content): immagini inline e generazione con JSON Schema.
 - [Elenco modelli Gemini](https://ai.google.dev/api/models).
-- [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/): risposta JSON e conteggio dei token.
+- [DeepSeek Responses API](https://api-docs.deepseek.com/api/create-response/): JSON Schema nativo, routing del ragionamento e conteggio dei token.
+- [DeepSeek context caching](https://api-docs.deepseek.com/guides/kv_cache/): cache automatica dei prefissi ripetuti.
 - [Modelli e prezzi DeepSeek](https://api-docs.deepseek.com/quick_start/pricing/).
 
 ## Sviluppo e test
@@ -130,6 +131,6 @@ python scripts/check_secrets.py
 
 Il test di integrazione richiede LaTeX: usa risposte HTTP predeterminate, ma esegue realmente acquisizione, checkpoint, ripresa dopo un limite, revisione, compilazione e verifica del PDF. I test non richiedono chiavi e non consumano credito. La CI installa LaTeX ed esegue questi controlli.
 
-Collaudo opzionale nel browser: installa `playwright==1.51.0`, esegui `python -m playwright install chromium`, poi `python scripts/ui_smoke.py`. Per la prova **a pagamento** con entrambi i provider e un PDF sintetico: configura le chiavi localmente ed esegui `python scripts/live_smoke.py --live`. Il relativo progetto limita le chiamate a 45 e la soglia a 300.000 token.
+Collaudo opzionale nel browser: installa `playwright==1.51.0`, esegui `python -m playwright install chromium`, poi `python scripts/ui_smoke.py`. Per una prova **a pagamento** con entrambi i provider e un PDF sintetico breve: configura le chiavi localmente ed esegui `python scripts/live_smoke.py --live`. Per riprodurre il caso esteso con grafici p-V/T-S e quesiti d'esame usa `python scripts/carnot_smoke.py --live`; imposta limiti adeguati prima di avviarlo, perché il collaudo documentato ha richiesto 56 chiamate e 698.990 token confermati.
 
 Non avviare più processi server sullo stesso archivio dati. L'applicazione è pensata per un singolo utente locale; non esporla direttamente su Internet.
