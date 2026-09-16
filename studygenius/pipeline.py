@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import re
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -37,6 +38,23 @@ def validate_outline(outline: Outline, expected: list[str]):
         extra = set(actual) - set(expected)
         repeated = [t for t, n in Counter(actual).items() if n > 1]
         raise ValueError(f"Copertura indice non valida. Mancanti: {sorted(missing)}; sconosciuti: {sorted(extra)}; ripetuti: {repeated}")
+
+
+def chapter_pipeline_limit(settings: Settings, chapter_count: int) -> int:
+    """Keep both providers busy without raising either provider's API limit.
+
+    A chapter alternates DeepSeek, local compilation and Gemini. Limiting the
+    whole chapter to DeepSeek's concurrency leaves capacity idle in the other
+    phases. Provider-specific semaphores in ``Models`` remain authoritative.
+    """
+    return min(chapter_count, 8, settings.deepseek_concurrency + settings.gemini_concurrency)
+
+
+def format_duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.0f} s"
+    minutes, remainder = divmod(round(seconds), 60)
+    return f"{minutes} min {remainder:02d} s"
 
 
 def validate_lesson(lesson: Lesson, topic_ids: list[str], visual_ids: list[str]):
@@ -418,7 +436,7 @@ class Pipeline:
 
             async def guide_batch(index, batch):
                 return await self.models.json("gemini", "Convenzioni del corso", prompts.GUIDE,
-                    compact_json(dict(batch)), CourseGuide, max_output=8000)
+                    compact_json(dict(batch)), CourseGuide, max_output=16000)
 
             guides = await self.parallel_map(guide_groups, self.settings.gemini_concurrency, guide_batch)
             merged = {key: list(dict.fromkeys(item for guide in guides for item in getattr(guide, key)))
@@ -457,6 +475,8 @@ class Pipeline:
         documents = read_json(self.directory / "inputs.json")
 
         async def produce_chapter(index, plan):
+            started = time.perf_counter()
+            phase_times = Counter()
             self.store.event(self.job_id, f"Avvio capitolo {index+1}/{len(plans)}: {plan.title}")
             chapter_dir = self.directory / "chapters" / f"C{index+1:03d}"
             chapter_dir.mkdir(parents=True, exist_ok=True)
@@ -466,16 +486,33 @@ class Pipeline:
             if saved and saved.get("guide_digest") == guide_digest:
                 lesson, review = Lesson.model_validate(saved["lesson"]), Review.model_validate(saved["review"])
                 validate_lesson(lesson, plan.topic_ids, visual_ids)
+                stored_timing = saved.get("timing")
+                timing = (stored_timing if isinstance(stored_timing, dict)
+                          else {"resumed": True, "phase_seconds": {}})
+                timing["resumed"] = True
             else:
-                lesson, review = await self.chapter(index, plan, chapter_dir, topics, visuals, visual_ids, page_map, assets, refs, documents)
-                atomic_json(final, {"lesson": lesson.model_dump(), "review": review.model_dump(), "guide_digest": guide_digest})
-            return lesson, review
+                lesson, review = await self.chapter(index, plan, chapter_dir, topics, visuals, visual_ids,
+                                                    page_map, assets, refs, documents, phase_times)
+                timing = {"resumed": False, "phase_seconds": {key: round(value, 2)
+                          for key, value in phase_times.items()}}
+                atomic_json(final, {"lesson": lesson.model_dump(), "review": review.model_dump(),
+                                    "guide_digest": guide_digest, "timing": timing})
+            timing = {**timing, "wall_seconds": round(time.perf_counter() - started, 2)}
+            self.store.event(self.job_id,
+                f"Capitolo {index+1}/{len(plans)} completato in {format_duration(timing['wall_seconds'])}"
+                + (" (ripreso dai checkpoint)." if timing.get("resumed") else "."))
+            return lesson, review, timing
 
         self.progress("Scrittura e revisione parallela dei capitoli", 0.34)
-        chapter_results = await self.parallel_map(plans, self.settings.deepseek_concurrency, produce_chapter,
+        chapter_concurrency = chapter_pipeline_limit(self.settings, len(plans))
+        self.store.event(self.job_id,
+            f"Mantengo attivi fino a {chapter_concurrency} capitoli indipendenti; i limiti API restano "
+            f"Gemini {self.settings.gemini_concurrency} e DeepSeek {self.settings.deepseek_concurrency}.")
+        chapter_results = await self.parallel_map(plans, chapter_concurrency, produce_chapter,
             lambda done, total: self.progress(f"Capitoli completati · {done}/{total}", 0.34 + 0.46*done/total))
         lessons = [result[0] for result in chapter_results]
         reviews = [result[1] for result in chapter_results]
+        chapter_timings = [result[2] for result in chapter_results]
         self.progress("Verifica del programma d'esame", 0.81)
         audit_reviews = []
         # Hierarchical audit: an exhaustive inventory is provided in bounded batches. A final
@@ -506,6 +543,9 @@ class Pipeline:
             audit_reviews.append({"passed": False, "issues": [{"severity": "major", "message":
                 "Indice molto esteso: confronto globale con il programma non eseguito. Verificare la copertura manualmente."}]})
         report = self.report(pages, evidence, topics, visuals, plans, lessons, reviews, audit_reviews)
+        report["performance"] = {"chapter_pipeline_concurrency": chapter_concurrency,
+                                 "provider_limits_unchanged": True,
+                                 "chapters": chapter_timings}
         report["course_guide"] = self.course_guide.model_dump()
         report["issues"].extend(self.course_guide.conflicts)
         output = self.directory / "output"
@@ -591,7 +631,9 @@ class Pipeline:
                 inspect_pdf_layout, output / "dispensa.pdf")
         await self.finish(output, report, plans, lessons)
 
-    async def chapter(self, index, plan, folder, topics, visuals, visual_ids, page_map, assets, refs, documents):
+    async def chapter(self, index, plan, folder, topics, visuals, visual_ids, page_map, assets, refs,
+                      documents, phase_times=None):
+        phase_times = phase_times if phase_times is not None else Counter()
         # Common, potentially cacheable content stays at the beginning. Both Gemini
         # implicit caching and DeepSeek disk caching match repeated request prefixes.
         context = {"exam_brief": self.options.exam_brief,
@@ -630,12 +672,16 @@ class Pipeline:
                                "current_lesson": last_lesson.model_dump(mode="json"),
                                "review": feedback,
                                "base_sha256": lesson_sha256(last_lesson)}
-                    revision = await self.models.json("deepseek",
-                        f"Capitolo {index+1}, revisione incrementale {attempt}", prompts.REVISE,
-                        compact_json(payload), LessonPatch,
-                        validate=lambda patch, base=last_lesson: validate_chapter_lesson(
-                            apply_lesson_patch(base, patch), plan.topic_ids, visual_ids, visuals),
-                        max_output=12000, tier="quality")
+                    phase_started = time.perf_counter()
+                    try:
+                        revision = await self.models.json("deepseek",
+                            f"Capitolo {index+1}, revisione incrementale {attempt}", prompts.REVISE,
+                            compact_json(payload), LessonPatch,
+                            validate=lambda patch, base=last_lesson: validate_chapter_lesson(
+                                apply_lesson_patch(base, patch), plan.topic_ids, visual_ids, visuals),
+                            max_output=12000, tier="quality")
+                    finally:
+                        phase_times["deepseek_seconds"] += time.perf_counter() - phase_started
                     # Simple test/replay adapters from StudyGenius 1.1 may return a
                     # complete Lesson directly; live validated providers return LessonPatch.
                     lesson = (revision if isinstance(revision, Lesson)
@@ -645,13 +691,18 @@ class Pipeline:
                         atomic_json(folder / f"patch-{attempt}.json", revision.model_dump(mode="json"))
                 else:
                     tier = "quality" if initial_tier == "quality" else "fast"
-                    lesson = await self.models.json("deepseek", f"Capitolo {index+1}, stesura iniziale", prompts.WRITE,
-                        compact_json(context), Lesson,
-                        validate=lambda r: validate_chapter_lesson(r, plan.topic_ids, visual_ids, visuals),
-                        max_output=32000, tier=tier)
+                    phase_started = time.perf_counter()
+                    try:
+                        lesson = await self.models.json("deepseek", f"Capitolo {index+1}, stesura iniziale", prompts.WRITE,
+                            compact_json(context), Lesson,
+                            validate=lambda r: validate_chapter_lesson(r, plan.topic_ids, visual_ids, visuals),
+                            max_output=32000, tier=tier)
+                    finally:
+                        phase_times["deepseek_seconds"] += time.perf_counter() - phase_started
             last_lesson = lesson
             atomic_json(draft_file, lesson.model_dump())
             self.store.update(self.job_id, stage=f"Capitolo {index+1} · verifica formule e grafici ({attempt+1})")
+            phase_started = time.perf_counter()
             try:
                 lesson, preview_diagnostics = await self.compile_preview_with_repair(
                     index, attempt, plan, lesson, folder, topics, visuals, visual_ids, assets, refs, documents)
@@ -661,10 +712,17 @@ class Pipeline:
                 feedback = {"latex_error": str(exc)[-2500:], "instruction": "Correggi la sintassi matematica segnalata senza omettere contenuti."}
                 self.store.event(self.job_id, f"Capitolo {index+1}: correggo un errore di compilazione LaTeX.")
                 continue
+            finally:
+                phase_times["latex_seconds"] += time.perf_counter() - phase_started
             last_lesson = lesson
             atomic_json(folder / f"draft-{attempt}.json", lesson.model_dump())
-            chart_images = await asyncio.to_thread(render_charts, lesson, folder / "plots", f"C{index+1:03d}")
-            map_images = await asyncio.to_thread(render_concept_maps, lesson, folder / "maps", f"C{index+1:03d}")
+            phase_started = time.perf_counter()
+            try:
+                chart_images, map_images = await asyncio.gather(
+                    asyncio.to_thread(render_charts, lesson, folder / "plots", f"C{index+1:03d}"),
+                    asyncio.to_thread(render_concept_maps, lesson, folder / "maps", f"C{index+1:03d}"))
+            finally:
+                phase_times["visual_render_seconds"] += time.perf_counter() - phase_started
             review_context = {"exam_brief": self.options.exam_brief,
                               "course_guide": self.course_guide.model_dump(),
                               "source_visual_catalog": context["source_visual_catalog"],
@@ -699,7 +757,11 @@ class Pipeline:
                 self.store.event(self.job_id,
                     f"Capitolo {index+1}: riuso la revisione locale completata.")
             else:
-                partial_reviews = await self.parallel_map(image_groups, self.settings.gemini_concurrency, review_part)
+                phase_started = time.perf_counter()
+                try:
+                    partial_reviews = await self.parallel_map(image_groups, self.settings.gemini_concurrency, review_part)
+                finally:
+                    phase_times["gemini_seconds"] += time.perf_counter() - phase_started
                 review = Review(passed=all(r.accepted for r in partial_reviews),
                     coverage=min(r.coverage for r in partial_reviews), correctness=min(r.correctness for r in partial_reviews),
                     clarity=min(r.clarity for r in partial_reviews), issues=[i for r in partial_reviews for i in r.issues])

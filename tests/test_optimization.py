@@ -13,7 +13,7 @@ from studygenius.demo import demo_content
 from studygenius.ingest import ingest
 from studygenius.models import Contract, JobOptions, LessonPatch, LessonRepair, SourcePage
 from studygenius.pipeline import (Pipeline, adaptive_page_groups, apply_lesson_patch,
-                                  apply_lesson_repair, lesson_sha256)
+                                  apply_lesson_repair, chapter_pipeline_limit, lesson_sha256)
 from studygenius.providers import Models
 from studygenius.render import create_layout_review_assets, inspect_pdf_layout, render_concept_maps
 from studygenius.storage import Store, atomic_json
@@ -114,6 +114,13 @@ def test_adaptive_batches_pack_text_pages_and_isolate_scans():
     assert max(len(group) for group in groups) <= 4
     scan_group = next(group for group in groups if pages[2] in group)
     assert len(scan_group) <= 3
+
+
+def test_chapter_pipeline_uses_both_provider_windows_without_raising_them():
+    settings = Settings(gemini_concurrency=2, deepseek_concurrency=2)
+    assert chapter_pipeline_limit(settings, 16) == 4
+    assert chapter_pipeline_limit(settings, 3) == 3
+    assert chapter_pipeline_limit(Settings(gemini_concurrency=8, deepseek_concurrency=8), 20) == 8
 
 
 def test_concept_map_renderer_emits_vector_and_review_assets(tmp_path):

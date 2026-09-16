@@ -37,7 +37,9 @@ Tratta grafici, tabelle, schemi, mappe e diagrammi come evidenze. Descrivine ass
 legende, curve e messaggio fisico; delimitali con bbox [x0,y0,x1,y1] su una pagina 0–1000,
 includendo didascalie ed etichette. Se il confine non è sicuro, preferisci un riquadro più
 ampio. Non ricavare numeri a occhio da una curva. Una copertina, una pagina bianca o un indice
-senza contenuto può essere escluso spiegandone il motivo; ogni altra pagina merita una lettura.
+senza contenuto può essere escluso spiegandone il motivo. Anche nome del corso, docente, anno,
+intestazioni, piè di pagina e sole informazioni organizzative sono contesto editoriale, non
+argomenti didattici autonomi: non trasformarli in topic se la pagina non insegna altro. Ogni altra pagina merita una lettura.
 Ogni page_id ricevuto deve avere una sola analisi, così la redazione può verificare la copertura.
 """
 
@@ -45,7 +47,10 @@ PLAN = COMMON + r"""
 Ruolo: progettista del percorso di studio. Costruisci una sequenza di capitoli che accompagni
 lo studente dai prerequisiti alle applicazioni, invece di seguire meccanicamente l'ordine dei
 file. Un capitolo dovrebbe sostenere un'idea didattica riconoscibile e, di norma, raccogliere
-3–6 argomenti; dieci è il limite oltre il quale la scrittura perde coesione.
+5–8 argomenti; dieci è il limite oltre il quale la scrittura perde coesione. Un nucleo breve
+può restare autonomo quando è davvero distinto, per esempio una derivazione o un esercizio
+complesso, ma non creare capitoli separati per metadati del corso, intestazioni o informazioni
+organizzative: se sono arrivate come topic, assorbile nel primo capitolo pertinente.
 
 Gli identificatori sono il filo che collega la dispensa alle fonti: assegna ciascun topic_id
 una volta sola e non crearne di nuovi. Le ripetizioni presenti nei PDF possono stare nello
