@@ -486,18 +486,28 @@ def source_visual_box(source: SourceVisual) -> str:
     return "\n".join(parts)
 
 def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson], visual_assets: dict,
-               topic_refs: dict, documents: list[dict], report: dict, mode="live") -> dict:
+               topic_refs: dict, documents: list[dict], report: dict, mode="live",
+               output_profile="study") -> dict:
     folder.mkdir(parents=True, exist_ok=True)
     template = (Path(__file__).parent / "templates" / "book.tex").read_text(encoding="utf-8")
     flags = report.get("issues", [])
     status = "DIMOSTRAZIONE OFFLINE" if mode == "demo" else ("DA VERIFICARE" if flags else "REVISIONI AUTOMATICHE COMPLETATE")
+    profile_copy = {
+        "summary": ("Riassunto breve", "Nuclei essenziali, formule decisive e figure necessarie.",
+                    "Leggi il capitolo seguendo i collegamenti tra le idee; usa le fonti indicate per approfondire i dettagli esclusi dalla sintesi."),
+        "study": ("Dispensa ragionata per lo studio", "Teoria, passaggi matematici, figure commentate ed esercizi mirati.",
+                  "Studia il capitolo, risolvi gli esercizi prima di leggere lo svolgimento e usa il richiamo attivo per verificarti."),
+        "transcript": ("Sbobina estesa e ordinata", "Percorso esteso, passaggi, figure commentate ed esercizi svolti.",
+                       "Segui il testo nell'ordine proposto e usa sintesi e domande per distinguere i nuclei dalle integrazioni."),
+    }
+    profile_title, profile_promise, study_method = profile_copy.get(output_profile, profile_copy["study"])
     parts = [r"\begin{titlepage}\sffamily", r"{\color{accent}\Large STUDYGENIUS}\par",
              r"\vspace{20mm}{\Huge\bfseries\raggedright\hyphenpenalty=10000\exhyphenpenalty=10000 " + escape(title) + r"\par}",
-             r"\vspace{8mm}{\Large Dispensa ragionata per lo studio}\par",
+             r"\vspace{8mm}{\Large " + escape(profile_title) + r"}\par",
              r"\vspace{16mm}\begin{tcolorbox}[colback=light,colframe=accent,title=" + escape(status) + "]",
-             "Teoria, passaggi matematici, figure commentate ed esercizi svolti.",
+             profile_promise,
              r"\end{tcolorbox}\vfill",
-             r"\textbf{Metodo di lettura}\par Studia il capitolo, risolvi gli esercizi prima di leggere lo svolgimento e rispondi alle domande di richiamo senza consultare le soluzioni.\par\medskip",
+             r"\textbf{Metodo di lettura}\par " + rich(study_method) + r"\par\medskip",
              "Le revisioni automatiche aiutano a individuare errori e omissioni, ma non certificano la correttezza scientifica né il superamento dell'esame. Confronta il programma ufficiale e i punti segnalati con il docente.",
              r"\end{titlepage}\tableofcontents\clearpage",
              r"\chapter*{Prima di iniziare}\addcontentsline{toc}{chapter}{Prima di iniziare}"]
@@ -505,13 +515,20 @@ def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson
         parts.append("Questo documento usa contenuti dimostrativi prestabiliti. Non è stato scritto o revisionato da chiamate API live. I consumi della dimostrazione sono zero.")
     parts.append("I riferimenti D001, D002, ecc. identificano i documenti elencati in appendice. I numeri di pagina indicano le pagine fisiche del PDF caricato, a partire da 1.")
     if flags:
+        visible_flags = list(flags)
+        if output_profile == "summary" and len(visible_flags) > 12:
+            hidden = len(visible_flags) - 12
+            visible_flags = visible_flags[:12] + [
+                f"Altri {hidden} rilievi sono disponibili nel rapporto di qualità allegato ai sorgenti."
+            ]
         parts.append(r"\begin{tcolorbox}[breakable,colback=warm,colframe=rust,title=Punti da verificare]")
-        parts.append(bullets([str(i) for i in flags]))
+        parts.append(bullets([str(i) for i in visible_flags]))
         parts.append(r"\end{tcolorbox}")
     for index, (plan, lesson) in enumerate(zip(plans, lessons), 1):
         prefix = f"C{index:03d}"
-        parts.extend([r"\chapter{" + heading(lesson.title) + "}", rich(lesson.introduction),
-                      r"\section*{Obiettivi}", bullets(plan["objectives"])])
+        parts.extend([r"\chapter{" + heading(lesson.title) + "}", rich(lesson.introduction)])
+        if output_profile != "summary":
+            parts.extend([r"\section*{Obiettivi}", bullets(plan["objectives"])])
         if plan.get("prerequisites"):
             parts.extend([r"\textbf{Prerequisiti}", bullets(plan["prerequisites"])])
         for section in lesson.sections:
@@ -559,7 +576,8 @@ def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson
             parts.extend([r"\Needspace{16\baselineskip}\section*{Grafico ricostruito: " + heading(chart.title) + "}",
                           r"\begin{center}\includegraphics[width=\linewidth,height=0.52\textheight,keepaspectratio]{assets/" + f"{prefix}-chart-{i:02d}.pdf" + r"}\end{center}",
                           r"\textbf{Provenienza dei dati.} " + rich(chart.provenance), "\n\n" + rich(chart.explanation)])
-        parts.append(r"\section{Esercizi svolti}")
+        if lesson.exercises:
+            parts.append(r"\section{Esercizi svolti}")
         for i, exercise in enumerate(lesson.exercises, 1):
             label = "Esercizio dalla fonte" if exercise.origin == "source" else "Esercizio didattico creato"
             parts.extend([r"\subsection{" + f"{i}. {label}" + "}",
@@ -571,13 +589,21 @@ def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson
                     parts.append(display(step.math))
             parts.extend([r"\paragraph{Risposte ai punti richiesti}", bullets(exercise.answers, True),
                           r"\paragraph{Controlli sul risultato}", bullets(exercise.checks)])
-        parts.extend([r"\section{Richiamo attivo}", "Prova a rispondere prima di consultare le soluzioni in appendice.",
-                      bullets([q.question for q in lesson.recall], True), r"\section*{Cosa devi saper fare}", bullets(lesson.recap)])
+        if lesson.recall:
+            parts.extend([r"\section{Richiamo attivo}",
+                          "Prova a rispondere prima di consultare le soluzioni in appendice.",
+                          bullets([q.question for q in lesson.recall], True)])
+        parts.extend([r"\section*{Cosa devi saper fare}", bullets(lesson.recap)])
         if lesson.uncertainties and not all(any(u in str(flag) for flag in flags) for u in lesson.uncertainties):
             parts.extend([r"\paragraph{Dubbi da chiarire}", bullets(lesson.uncertainties)])
-    parts.extend([r"\appendix\chapter{Risposte al richiamo attivo}"])
-    for lesson in lessons:
-        parts.extend([r"\section{" + heading(lesson.title) + "}", bullets([q.answer for q in lesson.recall], True)])
+    recalled = [lesson for lesson in lessons if lesson.recall]
+    if output_profile != "summary" and recalled:
+        parts.extend([r"\appendix\chapter{Risposte al richiamo attivo}"])
+        for lesson in recalled:
+            parts.extend([r"\section{" + heading(lesson.title) + "}",
+                          bullets([q.answer for q in lesson.recall], True)])
+    else:
+        parts.append(r"\appendix")
     parts.extend([r"\chapter{Fonti e tracciabilità}"])
     for index, document in enumerate(documents, 1):
         parts.extend([r"\section*{D" + f"{index:03d}" + " - " + escape(document["filename"]) + "}",

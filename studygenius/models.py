@@ -14,6 +14,7 @@ class JobOptions(Contract):
     title: str = Field(default="La mia dispensa", min_length=1, max_length=160)
     exam_brief: str = Field(default="", max_length=12000)
     mode: Literal["live", "demo"] = "live"
+    output_profile: Literal["summary", "study", "transcript"] = "study"
     review_rounds: int = Field(default=2, ge=1, le=4)
     max_api_calls: int = Field(default=300, ge=1, le=10000)
     max_total_tokens: int = Field(default=2_000_000, ge=1000, le=100_000_000)
@@ -126,6 +127,8 @@ class SourceVisual(Contract):
 
     title: str = Field(min_length=1, max_length=180)
     kind: Literal["chart", "map"]
+    importance: Literal["essential", "supporting", "decorative"] = "supporting"
+    importance_reason: str = Field(default="", max_length=500)
     chart: SchedaAnaliticaGrafico | None = None
     concept_map: SchedaMappa | None = None
     uncertainty: str = Field(default="", max_length=4000)
@@ -163,7 +166,7 @@ class EvidenceBatch(Contract):
 
 class ChapterPlan(Contract):
     title: str = Field(min_length=1, max_length=180)
-    topic_ids: list[str] = Field(min_length=1, max_length=10)
+    topic_ids: list[str] = Field(min_length=1, max_length=40)
     objectives: list[str] = Field(min_length=1, max_length=8)
     prerequisites: list[str] = Field(default_factory=list, max_length=8)
 
@@ -288,12 +291,12 @@ class Lesson(Contract):
     title: str = Field(min_length=1, max_length=180)
     introduction: str = Field(min_length=20)
     sections: list[Section] = Field(min_length=1, max_length=30)
-    exercises: list[Exercise] = Field(min_length=1, max_length=20)
-    recall: list[Recall] = Field(min_length=3, max_length=20)
+    exercises: list[Exercise] = Field(default_factory=list, max_length=20)
+    recall: list[Recall] = Field(default_factory=list, max_length=20)
     visuals: list[VisualExplanation] = Field(default_factory=list, max_length=60)
     concept_maps: list[ConceptMap] = Field(default_factory=list, max_length=3)
     charts: list[Chart] = Field(default_factory=list, max_length=6)
-    recap: list[str] = Field(min_length=2)
+    recap: list[str] = Field(min_length=1)
     uncertainties: list[str] = Field(default_factory=list)
 
 

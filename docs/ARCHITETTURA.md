@@ -9,6 +9,7 @@
 | `storage.py` | SQLite per stati, eventi e consumi; JSON atomici per i checkpoint |
 | `ingest.py` | Validazione PDF, impronte SHA-256 e acquisizione parallela di tutte le pagine |
 | `vision.py` | Profili adattivi per immagini multimodali e fallback ad alta fedeltà |
+| `editorial.py` | Profili di output, budget deterministici, deduplicazione dei topic e selezione visuale |
 | `models.py` | Contratti Pydantic per evidenze, indice, lezioni, grafici e revisioni |
 | `providers.py` | API native Gemini e DeepSeek, retry, cache e conteggi persistenti |
 | `prompts.py` | Brief editoriali umani e ruoli, versionati insieme al codice; i vincoli meccanici restano nei contratti |
@@ -23,7 +24,8 @@
 flowchart TD
     A[PDF caricati] --> B[Testo e immagini adattive per pagina]
     B --> C[Gemini: evidenze e figure]
-    C --> D[DeepSeek Flash: indice]
+    C --> M[Unità concettuali e budget editoriale]
+    M --> D[DeepSeek Flash: indice]
     C --> I[Gemini: convenzioni condivise]
     I --> D
     D --> J[Routing per complessità]
@@ -40,22 +42,23 @@ flowchart TD
 
 Un documento è identificato da `D001`; una pagina da `D001-P0001`; un argomento da `D001-P0001-T01`; una figura da `D001-P0001-V01`. Gli identificatori sono assegnati dall'applicazione. Il modello non sceglie percorsi sul filesystem.
 
-L'indice deve utilizzare ciascun argomento esattamente una volta. La lezione deve coprire esattamente i suoi argomenti assegnati e spiegare ciascuna figura assegnata una volta. Gli esercizi e i grafici non possono citare argomenti esterni al capitolo. La mappa di copertura è esportata nel rapporto.
+L'indice deve utilizzare ciascun argomento esattamente una volta. Anche nelle sezioni della lezione ogni `topic_id` può comparire una sola volta: riferimenti ripetuti allo stesso concetto vengono riuniti in una unità e spiegati insieme. La lezione spiega ciascuna figura assegnata una volta. Gli esercizi e i grafici non possono citare argomenti esterni al capitolo. La mappa di copertura e il budget editoriale sono esportati nel rapporto.
 
 Le figure ricostruibili di una pagina condivisa tra più capitoli sono assegnate al primo capitolo pertinente. Gemini non restituisce coordinate di ritaglio: produce una `SchedaAnaliticaGrafico` o una `SchedaMappa`, validate prima che i renderer locali generino il PDF vettoriale. La pagina sorgente completa resta disponibile al revisore; una preview PNG serve soltanto alla review e non viene inserita nella dispensa.
 
 ## Contesto e documenti lunghi
 
 - Lettura: 1-4 pagine per richiesta, immagini incluse. Il batch usa una capacità adattiva: scansioni e testo minuto pesano il doppio delle pagine digitali. Rendering locale a profilo adattivo; una segnalazione esplicita di illeggibilità produce una rilettura isolata a risoluzione maggiore.
-- Pianificazione: inventari di massimo 100 argomenti e limiti sul numero di caratteri.
-- Stesura: massimo 10 argomenti e 60.000 caratteri di evidenze per capitolo; i gruppi troppo estesi vengono suddivisi preservando tutti gli ID.
+- Pianificazione: inventari di massimo 200 unità concettuali e 100.000 caratteri; il numero obiettivo di capitoli viene ripartito tra i blocchi.
+- Stesura: il numero di argomenti per capitolo dipende dal profilo (fino a 32 nel riassunto); 90.000 caratteri restano il limite di contesto. I gruppi troppo estesi vengono suddivisi preservando tutti gli ID.
+- Budget: parole, sezioni, paragrafi, esercizi, richiami, mappe e grafici sono validati per capitolo; anche la somma globale deve rientrare nel massimo del profilo.
 - Coerenza: estrazione delle convenzioni da tutte le evidenze in blocchi di 100 argomenti / 80.000 caratteri; sintesi delle convenzioni e dei conflitti, condivisa con autore e revisore insieme all'indice. Un cambio della guida invalida i capitoli salvati con una guida diversa.
 - Revisione delle fonti: immagini in gruppi di massimo 12, con il contesto testuale del capitolo; gruppi indipendenti eseguiti con concorrenza limitata.
 - Revisione dell'impaginazione: geometria e font di tutte le pagine controllati localmente; tavole panoramiche numerate coprono il documento completo e vengono inviate fino a quattro per richiesta; pagine con figure, testo piccolo o confini strutturali vengono inviate anche a piena risoluzione.
 - Rilievi finali: se la revisione visiva aggiunge problemi, l'elenco iniziale nel PDF viene aggiornato e ricompilato. Il rapporto distingue l'impaginazione sottoposta al modello da quella finale; non attribuisce una seconda revisione visiva alla nuova pagina dei rilievi.
 - Confronto globale con il programma: indice e obiettivi completi, fino a 180.000 caratteri. Oltre tale limite viene segnalata la necessità di verifica manuale; non si finge che il confronto sia stato eseguito.
 
-La pianificazione per grandi inventari privilegia l'ordine delle fonti. Non implementa una deduplicazione semantica globale perfetta tra centinaia di documenti. Le ripetizioni restano tracciate.
+La pianificazione per grandi inventari privilegia l'ordine delle fonti. La deduplicazione globale dei titoli è conservativa e non sostituisce un embedding o un knowledge graph completo; le ripetizioni riconosciute restano comunque tracciate con tutti gli ID sorgente.
 
 ## Errori, costi e ripresa
 
@@ -97,7 +100,7 @@ Il progetto locale conserva:
     course-guide.json         # convenzioni, simboli e conflitti condivisi
     cache/                    # risposte validate, senza chiavi
     chapters/                 # versioni, revisioni e anteprime
-    visuals/                  # ritagli originali
+    visuals/                  # PDF vettoriali ricostruiti e preview di revisione
     layout/                   # pagine del PDF renderizzato
     output/
       dispensa.pdf

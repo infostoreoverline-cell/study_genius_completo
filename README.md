@@ -76,14 +76,22 @@ Apri http://127.0.0.1:8765. Il primo build include LaTeX e può richiedere diver
 
 1. **Acquisizione completa.** Verifica i PDF, scarta duplicati identici, conserva i file e indicizza tutte le pagine con identificatori stabili. Non taglia il documento a un numero di pagine nascosto.
 2. **Lettura multimodale.** Ogni pagina viene inviata a Gemini come immagine, insieme al testo estratto. Il computer sceglie localmente una risoluzione e un batch adatti: le pagine digitali semplici vengono lette insieme, mentre scansioni e testo minuto occupano più capacità e vengono isolate automaticamente. Un dubbio di leggibilità attiva una rilettura mirata ad alta fedeltà. Individua teoria, dimostrazioni, esercizi, grafici, tabelle e mappe.
-3. **Percorso di studio.** DeepSeek Flash organizza tutti gli argomenti estratti. Un controllo deterministico verifica che nessun ID sia omesso, duplicato nell'indice o inventato. I contesti grandi sono suddivisi in blocchi, senza troncamento silenzioso.
-4. **Spiegazione approfondita.** Una guida condivisa allinea simboli, convenzioni e conflitti nelle fonti prima della scrittura. Più capitoli indipendenti avanzano tra autore, compilazione locale e revisore; semafori separati mantengono invariati i limiti di concorrenza di ciascun provider. I capitoli semplici partono dal modello veloce; derivazioni, esercizi e formule usano DeepSeek Pro. Se una revisione del percorso veloce fallisce, il tentativo successivo passa automaticamente a Pro. Ogni autore produce paragrafi ragionati, ipotesi e unità, passaggi espliciti, esercizi completi, risposte e controlli dimensionali.
+3. **Percorso di studio.** DeepSeek Flash organizza tutti gli argomenti estratti. Prima del piano, titoli uguali o quasi equivalenti diventano un'unica unità concettuale pur conservando tutti i riferimenti alle pagine. Un controllo deterministico verifica che nessun ID sia omesso, ripetuto nell'indice o inventato. I contesti grandi sono suddivisi in blocchi, senza troncamento silenzioso.
+4. **Spiegazione proporzionata.** Una guida condivisa allinea simboli, convenzioni e conflitti nelle fonti prima della scrittura. Il profilo scelto assegna un budget reale di capitoli, parole, sezioni, esercizi, richiami e visuali; una risposta troppo lunga viene rifiutata e corretta. Più capitoli indipendenti avanzano tra autore, compilazione locale e revisore; semafori separati mantengono invariati i limiti di concorrenza di ciascun provider. I capitoli semplici partono dal modello veloce; derivazioni, esercizi e formule usano DeepSeek Pro.
 5. **Figure vettoriali spiegate.** Gemini descrive grafici e mappe mediante schede Pydantic: assi brevi, curve numeriche, formule, parametri, punti critici, nodi e relazioni. Matplotlib e Graphviz producono PDF vettoriali nativi; il ritaglio bitmap delle figure è eliminato. La pagina sorgente completa e una preview della ricostruzione restano disponibili alla revisione Gemini. Fotografie o strutture non ricostruibili non vengono inventate.
 6. **Revisione e correzione incrementale.** Gemini controlla testo, grafici e mappe contro le fonti. Quando trova un problema, DeepSeek restituisce una piccola patch sul capitolo invece di rigenerarlo integralmente; il sistema rivalida poi contratto, riferimenti, matematica e compilazione. I problemi non risolti vengono segnalati e il PDF resta **da verificare**.
 7. **Compilazione e controllo visivo.** Il sistema compila davvero con LaTeX. Un errore sintattico viene isolato dal log e corretto con una patch testuale economica, senza una nuova revisione multimodale. Ogni pagina passa controlli locali di margini, font e vuoti; Gemini vede panoramiche dell'intero PDF in gruppi più densi e copie dettagliate delle sole pagine a rischio.
 8. **Consegna.** PDF selezionabile, archivio dei sorgenti LaTeX con le figure e rapporto di qualità con riferimenti alle pagine.
 
 La metodologia completa è in [docs/METODO_DI_STUDIO.md](docs/METODO_DI_STUDIO.md), i contratti e i componenti in [docs/ARCHITETTURA.md](docs/ARCHITETTURA.md).
+
+## Profili editoriali
+
+- **Riassunto breve:** comprime in base alla densità della fonte, unisce le ripetizioni, seleziona soltanto le visuali essenziali, non inventa esercizi e non duplica le risposte in appendice.
+- **Dispensa ragionata:** spiega in modo autosufficiente i nuclei del corso, con esempi, esercizi e richiamo attivo entro limiti misurabili.
+- **Sbobina estesa:** conserva più passaggi ed esempi, ma continua a deduplicare i concetti e mantiene un tetto editoriale.
+
+La lunghezza non è affidata soltanto al prompt. Il backend conta il testo validato e applica limiti per capitolo e per documento; ogni `topic_id` può comparire in una sola sezione. Il rapporto qualità registra parole sorgente, obiettivo, massimo ammesso, parole generate e rapporto di espansione. La decisione è descritta in [ADR-002](docs/ADR-002-BUDGET-EDITORIALE.md).
 
 ## Qualità: cosa viene misurato
 
