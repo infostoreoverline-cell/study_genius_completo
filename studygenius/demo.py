@@ -77,6 +77,20 @@ def demo_content() -> tuple[ChapterPlan, Lesson]:
         {"question":"Come cambierebbe il segno del lavoro per una compressione reversibile isoterma?", "answer":"In una compressione Vf/Vi è minore di uno e il suo logaritmo è negativo. Il segno meno davanti rende il lavoro positivo: l'ambiente compie lavoro sul gas."}
       ],
       "visuals":[{"visual_id":"D001-P0001-V01", "how_to_read":["L'asse orizzontale riporta il volume in litri; quello verticale la pressione in kilopascal.", "Ogni punto appartiene alla stessa temperatura, 300 K. Procedendo verso destra il volume cresce e la pressione diminuisce.", "Confronta gli estremi: passando da 10 L a 20 L, la pressione passa da circa 249 kPa a circa 125 kPa."], "meaning":"La curva rappresenta la relazione inversa tra pressione e volume. La sua area tra due volumi rappresenta il modulo del lavoro reversibile di espansione, usando unità coerenti: 1 kPa L = 1 J.", "takeaways":["La pendenza è negativa ma il suo modulo diminuisce all'aumentare del volume.", "L'area sotto la curva è positiva; il lavoro ricevuto dal gas è il suo opposto nella convenzione chimica."], "limitations":"La curva usa il modello ideale e non rappresenta effetti di gas reale. La lettura della pressione dal grafico è approssimata; il calcolo quantitativo usa l'equazione."}],
+      "concept_maps":[{"title":"Dallo stato del gas al bilancio energetico", "topic_ids":[t1,t2],
+        "nodes":[
+          {"id":"stato", "label":"Stato del gas ideale", "detail":"pV = nRT", "kind":"law"},
+          {"id":"percorso", "label":"Percorso isotermo reversibile", "detail":"T costante; p_ext ≈ p", "kind":"process"},
+          {"id":"lavoro", "label":"Lavoro di espansione", "detail":"w = -∫p_ext dV", "kind":"concept"},
+          {"id":"energia", "label":"Primo principio", "detail":"ΔU = q + w", "kind":"law"},
+          {"id":"bilancio", "label":"Bilancio isotermo", "detail":"ΔU = 0, quindi q = -w", "kind":"example"}],
+        "edges":[
+          {"source":"stato", "target":"percorso", "label":"descrive gli stati", "kind":"explains"},
+          {"source":"percorso", "target":"lavoro", "label":"determina", "kind":"leads_to"},
+          {"source":"lavoro", "target":"energia", "label":"entra nel", "kind":"leads_to"},
+          {"source":"energia", "target":"bilancio", "label":"con T costante", "kind":"leads_to"}],
+        "reading_path":["Parti dall'equazione di stato, che collega le variabili macroscopiche.", "Specifica il percorso prima di calcolare il lavoro.", "Inserisci il lavoro nel primo principio e interpreta il bilancio isotermo."],
+        "explanation":"La mappa separa tre livelli che spesso vengono confusi: l'equazione di stato descrive gli stati, il percorso rende calcolabile il lavoro e il primo principio chiude il bilancio energetico."}],
       "charts":[{"title":"Isoterma di una mole di gas ideale a 300 K", "topic_ids":[t1], "xlabel":"Volume V (L)", "ylabel":"Pressione p (kPa)", "kind":"line", "series":[{"label":"T = 300 K", "x":[10,12,14,16,18,20], "y":[249.42,207.85,178.157142857,155.8875,138.566666667,124.71]}], "provenance":"Ricostruzione della tabella numerica nella pagina 1 della fonte dimostrativa; p (kPa) = 2494.2 / V (L). I segmenti collegano i punti tabulati e non sono misurazioni sperimentali.", "explanation":"Il grafico ricostruito conserva assi, unità e valori della tabella. La linea tra i punti è un'interpolazione visiva; per ottenere valori intermedi accurati si usa l'equazione del gas ideale."}],
       "recap":["Saper distinguere equazione di stato e descrizione di una trasformazione.", "Motivare ogni sostituzione nella derivazione del lavoro reversibile.", "Controllare unità, segni e casi limite prima di accettare un risultato.", "Usare il primo principio con una convenzione di segno dichiarata."], "uncertainties":[]
     })

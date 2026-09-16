@@ -16,7 +16,7 @@ from .config import Settings
 from .storage import Store, atomic_json, read_json
 
 T = TypeVar("T", bound=BaseModel)
-PROMPT_VERSION = "1.0.0"
+PROMPT_VERSION = "2.0.0"
 
 
 class ProviderError(RuntimeError):
@@ -95,7 +95,8 @@ class Models:
         model = self.model_for(provider, tier)
         images = images or []
         contract = schema.model_json_schema()
-        # Keep the original fingerprint shape so validated 1.0 checkpoints remain reusable.
+        # Versioning deliberately invalidates responses when prompts or contracts change;
+        # otherwise identical validated calls remain reusable across jobs.
         fingerprint = json.dumps({"v": PROMPT_VERSION, "provider": provider, "model": model,
             "system": system, "prompt": prompt, "schema": contract, "output": max_output,
             "images": [hashlib.sha256(p.read_bytes()).hexdigest() for p in images]}, sort_keys=True)

@@ -11,9 +11,9 @@
 | `vision.py` | Profili adattivi per immagini multimodali e fallback ad alta fedeltà |
 | `models.py` | Contratti Pydantic per evidenze, indice, lezioni, grafici e revisioni |
 | `providers.py` | API native Gemini e DeepSeek, retry, cache e conteggi persistenti |
-| `prompts.py` | Protocollo didattico e ruoli, versionati insieme al codice |
+| `prompts.py` | Brief editoriali umani e ruoli, versionati insieme al codice; i vincoli meccanici restano nei contratti |
 | `pipeline.py` | Orchestrazione e controlli di copertura, revisione e produzione |
-| `render.py` | Composizione LaTeX, whitelist matematica, figure, compilazione e controlli |
+| `render.py` | Composizione LaTeX, whitelist matematica, grafici/mappe vettoriali deterministici, compilazione e controlli |
 | `demo.py` | Campione esplicito e deterministico, distinto dalla modalità live |
 
 ## Flusso dati
@@ -26,10 +26,11 @@ flowchart TD
     C --> I[Gemini: convenzioni condivise]
     I --> D
     D --> J[Routing per complessità]
-    J --> K[DeepSeek Flash o Pro: capitoli]
+    J --> K[DeepSeek Flash o Pro: capitoli e blueprint visuali]
     K --> E[LaTeX e figure renderizzate]
     E --> F[Gemini: revisione con fonti]
-    F -->|Correzioni entro il limite| K
+    F -->|Correzioni entro il limite| L[Patch incrementale DeepSeek Pro]
+    L --> E
     F -->|Versione conclusa| G[PDF e controllo visivo finale]
     G --> H[PDF, sorgenti e rapporto]
 ```
@@ -44,12 +45,12 @@ Le figure di una pagina condivisa tra più capitoli sono assegnate al primo capi
 
 ## Contesto e documenti lunghi
 
-- Lettura: 1-4 pagine per richiesta, immagini incluse. Rendering locale a profilo adattivo; una segnalazione esplicita di illeggibilità produce una rilettura isolata a risoluzione maggiore.
+- Lettura: 1-4 pagine per richiesta, immagini incluse. Il batch usa una capacità adattiva: scansioni e testo minuto pesano il doppio delle pagine digitali. Rendering locale a profilo adattivo; una segnalazione esplicita di illeggibilità produce una rilettura isolata a risoluzione maggiore.
 - Pianificazione: inventari di massimo 100 argomenti e limiti sul numero di caratteri.
 - Stesura: massimo 10 argomenti e 60.000 caratteri di evidenze per capitolo; i gruppi troppo estesi vengono suddivisi preservando tutti gli ID.
 - Coerenza: estrazione delle convenzioni da tutte le evidenze in blocchi di 100 argomenti / 80.000 caratteri; sintesi delle convenzioni e dei conflitti, condivisa con autore e revisore insieme all'indice. Un cambio della guida invalida i capitoli salvati con una guida diversa.
 - Revisione delle fonti: immagini in gruppi di massimo 12, con il contesto testuale del capitolo; gruppi indipendenti eseguiti con concorrenza limitata.
-- Revisione dell'impaginazione: geometria e font di tutte le pagine controllati localmente; tavole panoramiche numerate coprono il documento completo; pagine con figure, testo piccolo o confini strutturali vengono inviate anche a piena risoluzione.
+- Revisione dell'impaginazione: geometria e font di tutte le pagine controllati localmente; tavole panoramiche numerate coprono il documento completo e vengono inviate fino a quattro per richiesta; pagine con figure, testo piccolo o confini strutturali vengono inviate anche a piena risoluzione.
 - Rilievi finali: se la revisione visiva aggiunge problemi, l'elenco iniziale nel PDF viene aggiornato e ricompilato. Il rapporto distingue l'impaginazione sottoposta al modello da quella finale; non attribuisce una seconda revisione visiva alla nuova pagina dei rilievi.
 - Confronto globale con il programma: indice e obiettivi completi, fino a 180.000 caratteri. Oltre tale limite viene segnalata la necessità di verifica manuale; non si finge che il confronto sia stato eseguito.
 
@@ -63,11 +64,11 @@ Ogni richiesta è prenotata in una transazione SQLite **prima** dell'invio. I re
 
 Le risposte valide vengono memorizzate prima di applicare una pausa richiesta durante la chiamata. La chiave di cache include versione del protocollo, provider, modello, prompt, schema e impronte delle immagini. Esistono una cache per progetto e una cache condivisa locale, entrambe rivalidate. I prefissi comuni precedono il contenuto variabile per favorire le cache native dei provider. Una risposta troncata non viene accettata come documento valido. I tentativi di riparazione del JSON e di aumento dell'output sono limitati.
 
-I checkpoint di lettura, le bozze, le revisioni intermedie e i capitoli completati sono riutilizzati quando si riprende. Ogni bozza viene rivalidata contro argomenti e figure prima dell'uso. Per rigenerare anche i capitoli già completati con un diverso modello o protocollo bisogna creare un nuovo progetto.
+I checkpoint di lettura, le bozze, le patch, le revisioni intermedie e i capitoli completati sono riutilizzati quando si riprende. Ogni bozza viene rivalidata contro argomenti, figure e mappe prima dell'uso. Le revisioni scientifiche modificano il minimo sottoalbero JSON necessario e vengono poi rivalidate come lezioni complete. Per rigenerare anche i capitoli già completati con un diverso modello o protocollo bisogna creare un nuovo progetto.
 
 ## LaTeX e dati non fidati
 
-L'autore restituisce contenuti strutturati, non un preambolo LaTeX eseguibile. Il testo viene escapato, la matematica passa una whitelist di comandi e ambienti, la compilazione disabilita la shell e limita gli accessi TeX. Le chiavi non vengono passate nell'ambiente del compilatore. I grafici accettano solo serie numeriche finite; non viene usato `eval`, né viene eseguito codice Python/SVG generato dal modello.
+L'autore restituisce contenuti strutturati, non un preambolo LaTeX eseguibile. Il testo viene escapato, la matematica passa una whitelist di comandi e ambienti, la compilazione disabilita la shell e limita gli accessi TeX. Le chiavi non vengono passate nell'ambiente del compilatore. I grafici accettano solo serie numeriche finite. Le mappe accettano nodi e archi con ID validati e vengono impaginate dal renderer locale. Non viene usato `eval`, né viene eseguito codice Python/SVG generato dal modello.
 
 Queste difese riducono i rischi ma **non sono una sandbox OS per file PDF ostili**: il parser PyMuPDF e il motore TeX restano software nativi. Per materiale non fidato è disponibile il container senza privilegi. Non esporre il server a utenti remoti.
 

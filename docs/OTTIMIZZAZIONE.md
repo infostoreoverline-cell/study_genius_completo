@@ -1,8 +1,18 @@
-# Refactoring prestazioni e costi · StudyGenius 1.1
+# Refactoring prestazioni, visuali e prompt · StudyGenius 1.2
 
 ## Obiettivo misurabile
 
 Il refactoring riduce pixel inviati, contesti ripetuti, chiamate di revisione e tempi morti senza rimuovere i controlli di copertura scientifica. La qualità resta protetta dagli stessi contratti Pydantic, dalla compilazione reale, dalla revisione incrociata e da fallback ad alta fedeltà. “Zero regressioni” è trattato come un gate di test e revisione, non come una promessa assoluta sulla risposta probabilistica dei modelli.
+
+## Interventi 1.2
+
+| Collo di bottiglia | Implementazione | Effetto atteso | Gate di qualità |
+| --- | --- | --- | --- |
+| Letture Gemini troppo frammentate | Capacità adattiva: fino a 4 pagine digitali, mentre scansioni e testo minuto pesano doppio | Su materiale digitale omogeneo, fino al 50% di chiamate di lettura in meno rispetto al precedente default di 2 pagine | Il limite per richiesta resta 4; le pagine rischiose vengono separate e conservano il fallback ad alta definizione |
+| Intero capitolo rigenerato dopo un rilievo | `LessonPatch` con `add`/`replace`/`remove`, digest della bozza e JSON Pointer | Nel benchmark riproducibile, una correzione locale occupa 555 caratteri contro 13.874 della lezione completa (−96,0% di output serializzato) | Dopo la patch vengono rieseguiti contratto `Lesson`, copertura topic/visuali/mappe, whitelist matematica e compilazione |
+| Prompt percepiti come protocollo meccanico | Brief editoriali narrativi: missione, lettore, priorità e criteri di giudizio; lo schema resta separato | Migliore libertà didattica senza ripetere il contratto nella prosa | Sicurezza, provenienza e copertura restano controlli deterministici nel codice |
+| Mappe concettuali assenti o affidate a SVG libero | Blueprint validato di nodi/archi + renderer locale deterministico | SVG/PDF/PNG coerenti, versionabili e leggibili in A4; nessun codice visuale del modello viene eseguito | ID unici, archi validi, nodi connessi, topic del capitolo e review multimodale |
+| Review finale del PDF ancora frammentata | Fino a 4 panoramiche per chiamata, dettagli separati solo per pagine a rischio | Sul PDF Carnot di 59 pagine: 5 chiamate previste invece di 15 nel baseline (−66,67%) | Tutte le pagine restano coperte dalle panoramiche e dal controllo geometrico locale |
 
 ## Interventi implementati
 
@@ -35,11 +45,11 @@ Sul PDF sintetico Carnot di tre pagine, nello stesso ambiente:
 | --- | ---: | ---: | ---: |
 | Pixel complessivi | 6.530.142 | 5.058.144 | −22,54% |
 | Byte JPEG complessivi | 594.486 | 379.528 | −36,16% |
-| Serializzazione dello schema `Lesson` | 5.647 caratteri | 5.103 caratteri | −9,63% |
+| Serializzazione dello schema `Lesson` 1.2 | 7.555 caratteri | 6.829 caratteri | −9,61% |
 
 Le tre pagine Carnot sono tutte classificate `technical` a 132 DPI; grafici, etichette e tabella restano leggibili nell'ispezione visiva. Pixel e byte non equivalgono direttamente ai token fatturati: il provider applica il proprio preprocessore. Il file JSON conserva misure e profili pagina per pagina.
 
-Quando è disponibile una dispensa finale, lo stesso script accetta `--final-pdf` e confronta anche il numero di richieste previste dalla vecchia revisione a blocchi di quattro con il nuovo controllo gerarchico. Sulla dispensa Carnot di 59 pagine il piano passa da 15 a 7 richieste visive (−53,33%): sette panoramiche coprono tutte le pagine e undici pagine a rischio restano disponibili a piena risoluzione. È una riduzione di chiamate prevista dal piano, non una misura monetaria del provider.
+Quando è disponibile una dispensa finale, lo stesso script accetta `--final-pdf` e confronta anche il numero di richieste previste dalla vecchia revisione a blocchi di quattro con il nuovo controllo gerarchico. Sulla dispensa Carnot di 59 pagine il piano passa da 15 a 5 richieste visive (−66,67%): sette panoramiche coprono tutte le pagine, aggregate fino a quattro per richiesta, e undici pagine a rischio restano disponibili a piena risoluzione. È una riduzione di chiamate prevista dal piano, non una misura monetaria del provider.
 
 ## Flusso ottimizzato
 
@@ -59,7 +69,8 @@ flowchart TD
     K -->|errore| L[Patch testuale Flash]
     L --> K
     K --> J[Gemini: review scientifica]
-    J -->|major| I
+    J -->|major| N[Patch incrementale Pro]
+    N --> K
     J -->|accettato| M[PDF + review visiva gerarchica]
 ```
 

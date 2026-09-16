@@ -11,10 +11,11 @@ from PIL import Image
 from studygenius.config import Settings
 from studygenius.demo import demo_content
 from studygenius.ingest import ingest
-from studygenius.models import Contract, JobOptions, LessonRepair
-from studygenius.pipeline import Pipeline, apply_lesson_repair, lesson_sha256
+from studygenius.models import Contract, JobOptions, LessonPatch, LessonRepair, SourcePage
+from studygenius.pipeline import (Pipeline, adaptive_page_groups, apply_lesson_patch,
+                                  apply_lesson_repair, lesson_sha256)
 from studygenius.providers import Models
-from studygenius.render import create_layout_review_assets, inspect_pdf_layout
+from studygenius.render import create_layout_review_assets, inspect_pdf_layout, render_concept_maps
 from studygenius.storage import Store, atomic_json
 from studygenius.vision import needs_high_fidelity, render_page_for_vision
 
@@ -82,6 +83,45 @@ def test_latex_repair_can_only_replace_existing_string_leaves():
         "field_path": "/sections/99/title", "replacement": "x", "reason": "Percorso inesistente."}])
     with pytest.raises(ValueError, match="Percorso"):
         apply_lesson_repair(lesson, wrong_path)
+
+
+def test_scientific_revision_applies_only_a_validated_delta():
+    plan, lesson = demo_content()
+    patch = LessonPatch(base_sha256=lesson_sha256(lesson), operations=[{
+        "op": "replace", "path": "/sections/0/paragraphs/0",
+        "value": lesson.sections[0].paragraphs[0] + " Il limite del modello va sempre dichiarato.",
+        "reason": "Rende esplicito il limite richiesto dalla revisione."}, {
+        "op": "add", "path": "/recap/-", "value": "Distinguere sempre stato e percorso.",
+        "reason": "Aggiunge il controllo concettuale mancante."}])
+    revised = apply_lesson_patch(lesson, patch)
+    assert revised.title == lesson.title
+    assert revised.sections[0].paragraphs[0].endswith("sempre dichiarato.")
+    assert revised.recap[-1] == "Distinguere sempre stato e percorso."
+    assert revised.sections[1] == lesson.sections[1]
+    bad = patch.model_copy(update={"base_sha256": "0" * 64})
+    with pytest.raises(ValueError, match="non corrisponde"):
+        apply_lesson_patch(lesson, bad)
+
+
+def test_adaptive_batches_pack_text_pages_and_isolate_scans():
+    pages = [SourcePage(id=f"D001-P{i:04d}", document="D001", filename="x.pdf",
+                        number=i, text="testo" * 20, image=f"pages/{i}.jpg")
+             for i in range(1, 7)]
+    manifest = {"pages": {page.id: {"profile": "digital-text"} for page in pages}}
+    manifest["pages"][pages[2].id]["profile"] = "scan"
+    groups = list(adaptive_page_groups(pages, manifest, max_pages=4))
+    assert [page for group in groups for page in group] == pages
+    assert max(len(group) for group in groups) <= 4
+    scan_group = next(group for group in groups if pages[2] in group)
+    assert len(scan_group) <= 3
+
+
+def test_concept_map_renderer_emits_vector_and_review_assets(tmp_path):
+    _, lesson = demo_content()
+    review_images = render_concept_maps(lesson, tmp_path, "C001")
+    assert len(review_images) == 1 and review_images[0].is_file()
+    assert (tmp_path / "C001-map-01.svg").read_text(encoding="utf-8").lstrip().startswith("<?xml")
+    assert (tmp_path / "C001-map-01.pdf").stat().st_size > 1000
 
 
 async def test_parallel_map_is_bounded_and_ordered(tmp_path):

@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch
 
 from .models import Lesson
 
@@ -287,23 +288,124 @@ def render_charts(lesson: Lesson, assets: Path, prefix: str) -> list[Path]:
     assets.mkdir(exist_ok=True, parents=True)
     paths = []
     with plt.rc_context({"font.size": 11, "axes.spines.top": False, "axes.spines.right": False,
-                         "text.parse_math": True, "axes.prop_cycle": plt.cycler(color=["#177e89", "#ba5b3b", "#7354a0", "#496d43", "#b2902e", "#264d77"])}):
+                         "text.parse_math": True, "svg.fonttype": "none",
+                         "axes.prop_cycle": plt.cycler(color=["#007C83", "#C44E32", "#6F4E9C", "#3E7C59", "#B07D00", "#315A8C"])}):
         for i, chart in enumerate(lesson.charts):
-            fig, ax = plt.subplots(figsize=(7.6, 4.6), layout="constrained")
+            fig, ax = plt.subplots(figsize=(7.6, 4.8), layout="constrained")
             try:
                 for series in chart.series:
                     if chart.kind == "line":
-                        ax.plot(series.x, series.y, label=plot_text(textwrap.fill(series.label, 34)), linewidth=2)
+                        ax.plot(series.x, series.y, label=plot_text(textwrap.fill(series.label, 34)),
+                                linewidth=2.2, marker="o" if len(series.x) <= 14 else None,
+                                markersize=4.5)
                     else:
-                        ax.scatter(series.x, series.y, label=plot_text(textwrap.fill(series.label, 34)), s=28)
+                        ax.scatter(series.x, series.y, label=plot_text(textwrap.fill(series.label, 34)),
+                                   s=34, edgecolor="white", linewidth=0.5)
                 ax.set(xlabel=plot_text(textwrap.fill(chart.xlabel, 75)),
                        ylabel=plot_text(textwrap.fill(chart.ylabel, 55)))
-                ax.set_title(plot_text(textwrap.fill(chart.title, 70)), loc="left", pad=16, weight="bold")
-                ax.grid(alpha=0.18)
-                ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=min(2, len(chart.series)), frameon=False)
+                ax.set_title(plot_text(textwrap.fill(chart.title, 68)), loc="left", pad=16, weight="bold")
+                ax.grid(which="major", alpha=0.18, linewidth=0.8)
+                all_x = [value for series in chart.series for value in series.x]
+                all_y = [value for series in chart.series for value in series.y]
+                if min(all_x) < 0 < max(all_x):
+                    ax.axvline(0, color="#5F6C70", linewidth=0.8, alpha=0.5)
+                if min(all_y) < 0 < max(all_y):
+                    ax.axhline(0, color="#5F6C70", linewidth=0.8, alpha=0.5)
+                if len(chart.series) > 1 or chart.series[0].label.strip():
+                    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
+                              ncol=min(3, len(chart.series)), frameon=False)
                 base = assets / f"{prefix}-chart-{i+1:02d}"
                 for ext in ("svg", "pdf", "png"):
-                    fig.savefig(base.with_suffix("." + ext), dpi=160, bbox_inches="tight")
+                    fig.savefig(base.with_suffix("." + ext), dpi=180, bbox_inches="tight",
+                                facecolor="white", metadata={"Creator": "StudyGenius deterministic chart renderer"})
+                paths.append(base.with_suffix(".png"))
+            finally:
+                plt.close(fig)
+    return paths
+
+
+def _concept_positions(concept_map) -> dict[str, tuple[float, float]]:
+    """Deterministic compact layout following a topological reading order."""
+    order = {node.id: index for index, node in enumerate(concept_map.nodes)}
+    incoming = {node.id: 0 for node in concept_map.nodes}
+    outgoing = {node.id: [] for node in concept_map.nodes}
+    for edge in concept_map.edges:
+        incoming[edge.target] += 1
+        outgoing[edge.source].append(edge.target)
+    queue = sorted((node for node, count in incoming.items() if count == 0), key=order.get)
+    if not queue:
+        queue = [concept_map.nodes[0].id]
+    reading_order, visited = [], set()
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+        reading_order.append(current)
+        for target in sorted(outgoing[current], key=order.get):
+            incoming[target] -= 1
+            if incoming[target] <= 0:
+                queue.append(target)
+    reading_order.extend(node.id for node in concept_map.nodes if node.id not in visited)
+    rows = [reading_order[start:start + 3] for start in range(0, len(reading_order), 3)]
+    positions = {}
+    total_rows = max(1, len(rows))
+    for row_index, row in enumerate(rows):
+        y = 0.82 if total_rows == 1 else 0.84 - row_index * (0.68 / (total_rows - 1))
+        xs = [column / (len(row) + 1) for column in range(1, len(row) + 1)]
+        if row_index % 2:
+            xs.reverse()
+        for x, node_id in zip(xs, row):
+            positions[node_id] = (x, y)
+    return positions
+
+
+def render_concept_maps(lesson: Lesson, assets: Path, prefix: str) -> list[Path]:
+    """Render model-authored semantics through a trusted, deterministic vector engine."""
+    assets.mkdir(exist_ok=True, parents=True)
+    paths = []
+    palette = {"concept": ("#EAF5F3", "#007C83"), "law": ("#EAF0FA", "#315A8C"),
+               "process": ("#F2ECF8", "#6F4E9C"), "example": ("#FFF3E5", "#B07D00"),
+               "warning": ("#FBEAE5", "#C44E32")}
+    with plt.rc_context({"font.family": "sans-serif", "svg.fonttype": "none"}):
+        for index, concept_map in enumerate(lesson.concept_maps, 1):
+            positions = _concept_positions(concept_map)
+            rows = len({round(y, 4) for _, y in positions.values()})
+            fig, ax = plt.subplots(figsize=(8.2, max(4.6, rows * 1.55)), layout="constrained")
+            try:
+                ax.set_xlim(0, 1)
+                ax.set_ylim(0, 1)
+                ax.axis("off")
+                ax.set_title(textwrap.fill(concept_map.title, 62), loc="left", fontsize=15,
+                             fontweight="bold", color="#192B34", pad=14)
+                for edge_index, edge in enumerate(concept_map.edges):
+                    start, end = positions[edge.source], positions[edge.target]
+                    same_row = abs(start[1] - end[1]) < 0.02
+                    curve = 0.18 * (1 if edge_index % 2 == 0 else -1) if same_row else 0.04
+                    arrow = FancyArrowPatch(start, end, transform=ax.transAxes,
+                                            connectionstyle=f"arc3,rad={curve}", arrowstyle="-|>",
+                                            mutation_scale=13, linewidth=1.25, color="#5F6C70",
+                                            shrinkA=36, shrinkB=36, zorder=1)
+                    ax.add_patch(arrow)
+                    middle = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+                    ax.text(*middle, textwrap.fill(edge.label, 18), transform=ax.transAxes,
+                            ha="center", va="center", fontsize=7.5, color="#445258", zorder=2,
+                            bbox={"boxstyle": "round,pad=0.18", "facecolor": "white",
+                                  "edgecolor": "none", "alpha": 0.94})
+                for node in concept_map.nodes:
+                    fill, border = palette[node.kind]
+                    label = textwrap.fill(node.label, 20)
+                    if node.detail:
+                        label += "\n" + textwrap.fill(node.detail, 27)
+                    ax.text(*positions[node.id], label, transform=ax.transAxes,
+                            ha="center", va="center", fontsize=9.5, color="#192B34", zorder=3,
+                            fontweight="bold" if not node.detail else "normal",
+                            bbox={"boxstyle": "round,pad=0.62", "facecolor": fill,
+                                  "edgecolor": border, "linewidth": 1.35})
+                base = assets / f"{prefix}-map-{index:02d}"
+                for ext in ("svg", "pdf", "png"):
+                    fig.savefig(base.with_suffix("." + ext), dpi=180, bbox_inches="tight",
+                                facecolor="white", metadata={"Creator": "StudyGenius deterministic concept-map renderer"})
                 paths.append(base.with_suffix(".png"))
             finally:
                 plt.close(fig)
@@ -473,15 +575,21 @@ def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson
             target.parent.mkdir(exist_ok=True)
             if Path(asset["path"]).resolve() != target.resolve():
                 shutil.copy2(asset["path"], target)
-            parts.extend([r"\Needspace{0.6\textheight}\section*{Leggere la figura: " + heading(asset["title"]) + "}",
-                          r"\begin{center}\includegraphics[width=\linewidth,height=0.48\textheight,keepaspectratio]{assets/" + name + r"}\end{center}",
+            parts.extend([r"\Needspace{14\baselineskip}\section*{Leggere la figura: " + heading(asset["title"]) + "}",
+                          r"\begin{center}\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{assets/" + name + r"}\end{center}",
                           r"{\small Fonte originale: " + escape(asset["reference"]) + r"}\par",
                           bullets(visual.how_to_read, True), rich(visual.meaning), bullets(visual.takeaways),
                           r"\paragraph{Limiti di lettura} " + rich(visual.limitations)])
+        render_concept_maps(lesson, folder / "assets", prefix)
+        for i, concept_map in enumerate(lesson.concept_maps, 1):
+            parts.extend([r"\Needspace{16\baselineskip}\section*{Mappa concettuale}",
+                          r"\begin{center}\includegraphics[width=\linewidth,height=0.52\textheight,keepaspectratio]{assets/" + f"{prefix}-map-{i:02d}.pdf" + r"}\end{center}",
+                          r"\paragraph{Percorso di lettura}", bullets(concept_map.reading_path, True),
+                          rich(concept_map.explanation)])
         render_charts(lesson, folder / "assets", prefix)
         for i, chart in enumerate(lesson.charts, 1):
-            parts.extend([r"\Needspace{0.52\textheight}\section*{Grafico ricostruito: " + heading(chart.title) + "}",
-                          r"\begin{center}\includegraphics[width=\linewidth]{assets/" + f"{prefix}-chart-{i:02d}.pdf" + r"}\end{center}",
+            parts.extend([r"\Needspace{16\baselineskip}\section*{Grafico ricostruito: " + heading(chart.title) + "}",
+                          r"\begin{center}\includegraphics[width=\linewidth,height=0.52\textheight,keepaspectratio]{assets/" + f"{prefix}-chart-{i:02d}.pdf" + r"}\end{center}",
                           r"\textbf{Provenienza dei dati.} " + rich(chart.provenance), "\n\n" + rich(chart.explanation)])
         parts.append(r"\section{Esercizi svolti}")
         for i, exercise in enumerate(lesson.exercises, 1):
