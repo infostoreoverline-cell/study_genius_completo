@@ -15,7 +15,8 @@ from studygenius.models import Contract, JobOptions, LessonPatch, LessonRepair, 
 from studygenius.pipeline import (Pipeline, adaptive_page_groups, apply_lesson_patch,
                                   apply_lesson_repair, chapter_pipeline_limit, lesson_sha256)
 from studygenius.providers import Models
-from studygenius.render import create_layout_review_assets, inspect_pdf_layout, render_concept_maps
+from studygenius.render import (build_book, create_layout_review_assets, inspect_pdf_layout,
+                                render_concept_maps)
 from studygenius.storage import Store, atomic_json
 from studygenius.vision import needs_high_fidelity, render_page_for_vision
 
@@ -49,6 +50,23 @@ def test_adaptive_vision_reduces_born_digital_pixels_and_keeps_fallback(tmp_path
     assert Image.open(regular).format == "JPEG"
     assert needs_high_fidelity(["Etichetta troppo piccola e non distinguibile"])
     assert not needs_high_fidelity(["La fonte non specifica il processo fisico"])
+
+
+def test_repeated_tiny_logo_does_not_force_heavy_vision_profile(tmp_path):
+    source = tmp_path / "slides.pdf"
+    logo = tmp_path / "logo.png"
+    Image.new("RGB", (40, 40), "#007C83").save(logo)
+    document = fitz.open()
+    page = document.new_page(width=720, height=540)
+    page.insert_text((72, 90), "Slide digitale con testo leggibile e senza figure scientifiche.", fontsize=12)
+    page.insert_image(fitz.Rect(10, 10, 35, 35), filename=str(logo))
+    document.save(source)
+    document.close()
+    target = tmp_path / "slide.jpg"
+    info = render_page_for_vision(source, 1, target)
+    assert info["profile"] == "digital-text"
+    assert info["signals"]["embedded_images"] == 0
+    assert info["signals"]["decorative_images"] == 1
 
 
 def test_parallel_ingestion_preserves_page_order_and_writes_policy_manifest(tmp_path):
@@ -127,7 +145,7 @@ def test_concept_map_renderer_emits_vector_and_review_assets(tmp_path):
     _, lesson = demo_content()
     review_images = render_concept_maps(lesson, tmp_path, "C001")
     assert len(review_images) == 1 and review_images[0].is_file()
-    assert (tmp_path / "C001-map-01.svg").read_text(encoding="utf-8").lstrip().startswith("<?xml")
+    assert (tmp_path / "C001-map-01.pdf").read_bytes().startswith(b"%PDF")
     assert (tmp_path / "C001-map-01.pdf").stat().st_size > 1000
 
 
@@ -203,3 +221,31 @@ def test_layout_scan_ignores_one_small_math_like_span(tmp_path):
     scan = inspect_pdf_layout(source)
     assert 2 not in scan["detailed_pages"]
     assert not scan["issues"]
+
+
+def test_fast_chapter_preview_uses_one_latex_pass_and_omits_book_boilerplate(tmp_path, monkeypatch):
+    plan, lesson = demo_content()
+    lesson = lesson.model_copy(deep=True)
+    lesson.visuals = []
+    calls = []
+
+    def fake_compile(folder, max_passes=4):
+        calls.append(max_passes)
+        document = fitz.open()
+        page = document.new_page()
+        page.insert_text((72, 90), "Anteprima valida", fontsize=12)
+        document.save(folder / "dispensa.pdf")
+        document.close()
+        return {"engine": "test", "overfull_boxes": [], "missing_characters": []}
+
+    monkeypatch.setattr("studygenius.render.compile_tex", fake_compile)
+    monkeypatch.setattr("studygenius.render.render_concept_maps", lambda *args: [])
+    monkeypatch.setattr("studygenius.render.render_charts", lambda *args: [])
+    refs = {topic_id: "D001, p. 1" for topic_id in plan.topic_ids}
+    diagnostics = build_book(tmp_path / "preview", lesson.title, [plan.model_dump()],
+                             [lesson], {}, refs, [], {"issues": []}, "live", "summary", True)
+    tex = (tmp_path / "preview" / "dispensa.tex").read_text()
+    assert calls == [1]
+    assert diagnostics["pages"] == 1
+    assert "\\tableofcontents" not in tex
+    assert "Fonti e tracciabilità" not in tex

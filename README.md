@@ -11,7 +11,7 @@ L'applicazione gira localmente; i modelli vengono chiamati via Internet con i tu
 ## Avvio su Windows
 
 1. Installa **Python 3.12** da [python.org](https://www.python.org/downloads/windows/), selezionando **Add Python to PATH**.
-2. Installa [MiKTeX](https://miktex.org/download). Apri MiKTeX Console, aggiorna i pacchetti e abilita l'installazione dei pacchetti mancanti, oppure installa quelli elencati sotto. Riavvia il terminale dopo l'installazione.
+2. Installa [MiKTeX](https://miktex.org/download) e [Graphviz](https://graphviz.org/download/). Apri MiKTeX Console, aggiorna i pacchetti e abilita l'installazione dei pacchetti mancanti. Durante l'installazione di Graphviz abilita l'aggiunta al `PATH`, quindi riavvia il terminale.
 3. Scarica questa repository con **Code → Download ZIP** ed estraila in una cartella scrivibile, oppure clonala con Git.
 4. Fai doppio clic su **`Avvia_StudyGenius.bat`**. Al primo avvio viene creato un ambiente Python isolato e vengono scaricate le dipendenze.
 5. Il browser si apre su **http://127.0.0.1:8765**. Tieni aperta la finestra del programma.
@@ -49,7 +49,7 @@ python -m studygenius
 Su Ubuntu/Debian:
 
 ```bash
-sudo apt-get install texlive-xetex texlive-latex-extra texlive-fonts-recommended texlive-lang-italian fonts-texgyre
+sudo apt-get install texlive-xetex texlive-latex-extra texlive-fonts-recommended texlive-lang-italian fonts-texgyre graphviz
 ```
 
 Su macOS installa [MacTeX](https://www.tug.org/mactex/). In alternativa, `bash avvia.sh` prepara l'ambiente Python e avvia l'app.
@@ -76,14 +76,22 @@ Apri http://127.0.0.1:8765. Il primo build include LaTeX e può richiedere diver
 
 1. **Acquisizione completa.** Verifica i PDF, scarta duplicati identici, conserva i file e indicizza tutte le pagine con identificatori stabili. Non taglia il documento a un numero di pagine nascosto.
 2. **Lettura multimodale.** Ogni pagina viene inviata a Gemini come immagine, insieme al testo estratto. Il computer sceglie localmente una risoluzione e un batch adatti: le pagine digitali semplici vengono lette insieme, mentre scansioni e testo minuto occupano più capacità e vengono isolate automaticamente. Un dubbio di leggibilità attiva una rilettura mirata ad alta fedeltà. Individua teoria, dimostrazioni, esercizi, grafici, tabelle e mappe.
-3. **Percorso di studio.** DeepSeek Flash organizza tutti gli argomenti estratti. Un controllo deterministico verifica che nessun ID sia omesso, duplicato nell'indice o inventato. I contesti grandi sono suddivisi in blocchi, senza troncamento silenzioso.
-4. **Spiegazione approfondita.** Una guida condivisa allinea simboli, convenzioni e conflitti nelle fonti prima della scrittura. Più capitoli indipendenti avanzano tra autore, compilazione locale e revisore; semafori separati mantengono invariati i limiti di concorrenza di ciascun provider. I capitoli semplici partono dal modello veloce; derivazioni, esercizi e formule usano DeepSeek Pro. Se una revisione del percorso veloce fallisce, il tentativo successivo passa automaticamente a Pro. Ogni autore produce paragrafi ragionati, ipotesi e unità, passaggi espliciti, esercizi completi, risposte e controlli dimensionali.
-5. **Figure spiegate e mappe reali.** I grafici originali vengono ritagliati e riprodotti con assi, guida alla lettura, significato e limiti. Le ricostruzioni usano soltanto serie numeriche dichiarate. Per i capitoli con più argomenti, DeepSeek descrive relazioni semantiche tra concetti e un renderer locale deterministico produce SVG, PDF e PNG senza eseguire codice del modello. Il testo della dispensa rimane testo LaTeX: non è un PDF fatto interamente di SVG.
-6. **Revisione e correzione incrementale.** Gemini controlla testo, grafici e mappe contro le fonti. Quando trova un problema, DeepSeek restituisce una piccola patch sul capitolo invece di rigenerarlo integralmente; il sistema rivalida poi contratto, riferimenti, matematica e compilazione. I problemi non risolti vengono segnalati e il PDF resta **da verificare**.
+3. **Percorso di studio.** DeepSeek Flash organizza tutti gli argomenti estratti mentre Gemini ricava in parallelo simboli e convenzioni comuni. Prima del piano, titoli uguali o quasi equivalenti diventano un'unica unità concettuale pur conservando tutti i riferimenti alle pagine. Un controllo deterministico verifica che nessun ID sia omesso, ripetuto nell'indice o inventato. I contesti grandi sono suddivisi in blocchi, senza troncamento silenzioso.
+4. **Spiegazione proporzionata.** Una guida condivisa allinea simboli, convenzioni e conflitti nelle fonti prima della scrittura. Il profilo scelto assegna un budget reale di capitoli, parole, sezioni, esercizi, richiami e visuali; una risposta troppo lunga viene rifiutata e corretta. Più capitoli indipendenti avanzano tra autore, compilazione locale e revisore; semafori separati mantengono invariati i limiti di concorrenza di ciascun provider. I capitoli semplici partono dal modello veloce; derivazioni, esercizi e formule usano DeepSeek Pro.
+5. **Figure vettoriali spiegate.** Gemini descrive grafici e mappe mediante schede Pydantic: assi brevi, curve numeriche, formule, parametri, punti critici, nodi e relazioni. Matplotlib e Graphviz producono PDF vettoriali nativi; il ritaglio bitmap delle figure è eliminato. La pagina sorgente completa e una preview della ricostruzione restano disponibili alla revisione Gemini. Fotografie o strutture non ricostruibili non vengono inventate.
+6. **Revisione e correzione incrementale.** Gemini controlla testo, grafici e mappe contro le fonti. Quando trova un problema, DeepSeek restituisce una piccola patch sul capitolo invece di rigenerarlo integralmente; il sistema rivalida poi contratto, riferimenti, matematica e compila un'anteprima minima a un passaggio. Il PDF finale usa comunque la compilazione multipass completa. I problemi non risolti vengono segnalati e il PDF resta **da verificare**.
 7. **Compilazione e controllo visivo.** Il sistema compila davvero con LaTeX. Un errore sintattico viene isolato dal log e corretto con una patch testuale economica, senza una nuova revisione multimodale. Ogni pagina passa controlli locali di margini, font e vuoti; Gemini vede panoramiche dell'intero PDF in gruppi più densi e copie dettagliate delle sole pagine a rischio.
 8. **Consegna.** PDF selezionabile, archivio dei sorgenti LaTeX con le figure e rapporto di qualità con riferimenti alle pagine.
 
 La metodologia completa è in [docs/METODO_DI_STUDIO.md](docs/METODO_DI_STUDIO.md), i contratti e i componenti in [docs/ARCHITETTURA.md](docs/ARCHITETTURA.md).
+
+## Profili editoriali
+
+- **Riassunto breve:** comprime in base alla densità della fonte, unisce le ripetizioni, seleziona soltanto le visuali essenziali, non inventa esercizi e non duplica le risposte in appendice.
+- **Dispensa ragionata:** spiega in modo autosufficiente i nuclei del corso, con esempi, esercizi e richiamo attivo entro limiti misurabili.
+- **Sbobina estesa:** conserva più passaggi ed esempi, ma continua a deduplicare i concetti e mantiene un tetto editoriale.
+
+La lunghezza non è affidata soltanto al prompt. Il backend conta il testo validato e applica limiti per capitolo e per documento; ogni `topic_id` può comparire in una sola sezione. Il rapporto qualità registra parole sorgente, obiettivo, massimo ammesso, parole generate e rapporto di espansione. La decisione è descritta in [ADR-002](docs/ADR-002-BUDGET-EDITORIALE.md).
 
 ## Qualità: cosa viene misurato
 
@@ -131,6 +139,6 @@ python scripts/check_secrets.py
 
 Il test di integrazione richiede LaTeX: usa risposte HTTP predeterminate, ma esegue realmente acquisizione, checkpoint, ripresa dopo un limite, revisione, compilazione e verifica del PDF. I test non richiedono chiavi e non consumano credito. La CI installa LaTeX ed esegue questi controlli.
 
-Collaudo opzionale nel browser: installa `playwright==1.51.0`, esegui `python -m playwright install chromium`, poi `python scripts/ui_smoke.py`. Per una prova **a pagamento** con entrambi i provider e un PDF sintetico breve: configura le chiavi localmente ed esegui `python scripts/live_smoke.py --live`. Per riprodurre il caso esteso con grafici p-V/T-S e quesiti d'esame usa `python scripts/carnot_smoke.py --live`; imposta limiti adeguati prima di avviarlo, perché il collaudo documentato ha richiesto 56 chiamate e 698.990 token confermati.
+Collaudo opzionale nel browser: installa `playwright==1.51.0`, esegui `python -m playwright install chromium`, poi `python scripts/ui_smoke.py`. Per una prova **a pagamento** con entrambi i provider e un PDF sintetico breve: configura le chiavi localmente ed esegui `python scripts/live_smoke.py --live`. Lo stesso collaudo accetta una fonte reale, ad esempio `python scripts/live_smoke.py --live --source Elettrochimica.pdf --profile summary --title "Elettrochimica · riassunto breve"`; stampa anche il percorso di `qualita.json`, che contiene tempi per fase e consumo. Per riprodurre il caso esteso con grafici p-V/T-S e quesiti d'esame usa `python scripts/carnot_smoke.py --live`; imposta limiti adeguati prima di avviarlo, perché il collaudo documentato ha richiesto 56 chiamate e 698.990 token confermati.
 
 Non avviare più processi server sullo stesso archivio dati. L'applicazione è pensata per un singolo utente locale; non esporla direttamente su Internet.

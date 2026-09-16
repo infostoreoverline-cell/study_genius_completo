@@ -8,8 +8,9 @@ from pathlib import Path
 import fitz
 
 from .ingest import ingest
-from .models import ChapterPlan, Lesson
-from .render import build_book, render_charts, validate_lesson_math
+from .models import (AsseGrafico, ChapterPlan, CurvaAnalitica, Lesson,
+                     SchedaAnaliticaGrafico, SourceVisual)
+from .render import build_book, render_charts, render_source_visual, validate_lesson_math
 from .storage import atomic_json
 
 
@@ -128,8 +129,6 @@ def make_source(directory: Path, lesson: Lesson):
 
 
 async def run_demo(pipeline):
-    from .ingest import crop_visual
-    from .models import SourceVisual
     from .storage import read_json
     plan, lesson = demo_content()
     validate_lesson_math(lesson)
@@ -137,10 +136,32 @@ async def run_demo(pipeline):
     pipeline.progress("Demo · lettura del PDF di esempio", 0.2, "Demo offline: uso contenuti didattici prestabiliti; nessuna API viene chiamata.")
     pages = await asyncio.to_thread(ingest, pipeline.directory, pipeline.check)
     atomic_json(pipeline.directory / "outline.json", [plan.model_dump()])
-    target = pipeline.directory / "visuals" / "D001-P0001-V01.png"
-    visual = SourceVisual(title="Isoterma del gas ideale", bbox=[50,320,950,780], description="Pressione in funzione del volume, a temperatura costante.")
-    await asyncio.to_thread(crop_visual, pipeline.directory, pages[0], visual, target)
-    assets = {"D001-P0001-V01":{"path":str(target),"title":visual.title,"reference":"D001, p. 1"}}
+    visual = SourceVisual(
+        title="Isoterma del gas ideale",
+        kind="chart",
+        chart=SchedaAnaliticaGrafico(
+            x_axis=AsseGrafico(label="Volume V", unit="L"),
+            y_axis=AsseGrafico(label="Pressione p", unit="kPa"),
+            curves=[CurvaAnalitica(
+                label="T = 300 K", formula_latex=r"p=\frac{nRT}{V}",
+                parameters={"n": 1.0, "T": 300.0, "R": 8.314},
+                x=[10, 12, 14, 16, 18, 20],
+                y=[249.42, 207.85, 178.157142857, 155.8875, 138.566666667, 124.71],
+                interpretation="La pressione diminuisce in modo inversamente proporzionale al volume.",
+            )],
+            source_basis="tabulated_data",
+            physical_chemical_meaning="L'isoterma collega gli stati di una mole di gas ideale alla stessa temperatura.",
+            analytical_steps=[
+                "Si parte da pV=nRT.",
+                "A n e T costanti si isola p=nRT/V.",
+                "I valori tabulati verificano che raddoppiando V la pressione si dimezza.",
+            ],
+            limitations="Modello di gas ideale; la linea collega dati calcolati, non misure sperimentali.",
+        ),
+    )
+    asset = await asyncio.to_thread(
+        render_source_visual, visual, pipeline.directory / "visuals", "D001-P0001-V01")
+    assets = {"D001-P0001-V01": {**asset, "title": visual.title, "reference": "D001, p. 1"}}
     pipeline.progress("Demo · composizione LaTeX", 0.6, "Compilo realmente il documento con LaTeX.")
     report = {"mode":"demo", "issues":["Dimostrazione offline con contenuti prestabiliti: nessuna revisione scientifica tramite API live."],
               "coverage":{"pages_total":2,"pages_analyzed":2,"topics_total":2,"topics_in_lessons":2,"visuals_total":1,"visuals_explained":1},

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import fitz
 
-from .models import SourcePage, SourceVisual
+from .models import SourcePage
 from .storage import atomic_json, read_json
 from .vision import VISION_POLICY_VERSION, render_page_for_vision
 
@@ -98,16 +98,3 @@ def render_high_fidelity_page(directory: Path, page: SourcePage) -> Path:
                                target, high_fidelity=True)
     return target
 
-
-def crop_visual(directory: Path, page: SourcePage, visual: SourceVisual, target: Path):
-    manifest = read_json(directory / "inputs.json")
-    item = manifest[int(page.document[1:]) - 1]
-    with fitz.open(directory / "inputs" / item["stored_name"]) as doc:
-        src = doc[page.number - 1]
-        x0, y0, x1, y1 = visual.bbox
-        rect = src.rect
-        clip = fitz.Rect(x0 * rect.width / 1000, y0 * rect.height / 1000,
-                         x1 * rect.width / 1000, y1 * rect.height / 1000)
-        target.parent.mkdir(exist_ok=True, parents=True)
-        scale = min(200 / 72, 2400 / max(clip.width, clip.height))
-        src.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False, colorspace=fitz.csRGB).save(target)

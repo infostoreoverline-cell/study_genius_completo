@@ -2,7 +2,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 STUDYGENIUS_DATA_DIR=/data
 RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-xetex texlive-latex-extra texlive-fonts-recommended texlive-lang-italian \
-    fonts-texgyre fonts-lmodern && rm -rf /var/lib/apt/lists/*
+    fonts-texgyre fonts-lmodern graphviz && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY pyproject.toml requirements.txt ./
 COPY studygenius ./studygenius

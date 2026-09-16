@@ -11,12 +11,15 @@ from pathlib import Path
 
 from . import prompts
 from .config import Settings
-from .ingest import crop_visual, ingest, render_high_fidelity_page
+from .editorial import (allocate_chapter_budgets, cluster_topic_inventory,
+                        make_editorial_policy, select_visuals,
+                        validate_book_budget, validate_lesson_budget)
+from .ingest import ingest, render_high_fidelity_page
 from .models import (ChapterPlan, CourseGuide, EvidenceBatch, JobOptions, Lesson,
                      LessonPatch, LessonRepair, Outline, PageAnalysis, Review)
 from .providers import Models
 from .render import (LatexError, build_book, create_layout_review_assets,
-                     inspect_pdf_layout, render_charts, render_concept_maps, source_archive,
+                     inspect_pdf_layout, render_charts, render_concept_maps, render_source_visual, source_archive,
                      validate_lesson_math, preflight_latex)
 from .storage import Store, atomic_json, read_json
 from .vision import needs_high_fidelity
@@ -40,6 +43,15 @@ def validate_outline(outline: Outline, expected: list[str]):
         raise ValueError(f"Copertura indice non valida. Mancanti: {sorted(missing)}; sconosciuti: {sorted(extra)}; ripetuti: {repeated}")
 
 
+def validate_outline_budget(outline: Outline, expected: list[str], max_chapters: int):
+    validate_outline(outline, expected)
+    if len(outline.chapters) > max_chapters:
+        raise ValueError(
+            f"Indice troppo frammentato: {len(outline.chapters)} capitoli; il profilo ne ammette "
+            f"al massimo {max_chapters} in questo blocco. Unisci i nuclei affini."
+        )
+
+
 def chapter_pipeline_limit(settings: Settings, chapter_count: int) -> int:
     """Keep both providers busy without raising either provider's API limit.
 
@@ -58,26 +70,29 @@ def format_duration(seconds: float) -> str:
 
 
 def validate_lesson(lesson: Lesson, topic_ids: list[str], visual_ids: list[str]):
-    expected = set(topic_ids)
-    actual = {t for s in lesson.sections for t in s.topic_ids}
+    expected = Counter(topic_ids)
+    actual = Counter(t for s in lesson.sections for t in s.topic_ids)
     if actual != expected:
-        raise ValueError(f"La lezione deve trattare esattamente questi topic_ids: {topic_ids}")
+        raise ValueError(f"La lezione deve trattare esattamente una volta questi topic_ids: {topic_ids}")
+    known = set(expected)
     for item in [*lesson.exercises, *lesson.charts, *lesson.concept_maps]:
-        if not set(item.topic_ids) <= expected:
+        if not set(item.topic_ids) <= known:
             raise ValueError("Esercizio o visuale con riferimenti a fonti inesistenti nel capitolo")
     if Counter(v.visual_id for v in lesson.visuals) != Counter(visual_ids):
         raise ValueError(f"Spiegare esattamente una volta ciascun visual_id: {visual_ids}")
     validate_lesson_math(lesson)
 
 
-def validate_chapter_lesson(lesson: Lesson, topic_ids, visual_ids, known_visual_ids):
+def validate_chapter_lesson(lesson: Lesson, topic_ids, visual_ids, known_visual_ids, budget=None):
     # Other known figures already have an owner in the course plan. Ignore those
     # extra explanations instead of regenerating an otherwise valid chapter.
     # Missing assigned figures, duplicates and unknown IDs still fail below.
     assigned, known = set(visual_ids), set(known_visual_ids)
     lesson.visuals = [v for v in lesson.visuals if v.visual_id in assigned or v.visual_id not in known]
     validate_lesson(lesson, topic_ids, visual_ids)
-    if len(topic_ids) >= 2 and not lesson.concept_maps:
+    if budget is not None:
+        validate_lesson_budget(lesson, budget, topic_ids)
+    elif len(topic_ids) >= 2 and not lesson.concept_maps:
         raise ValueError("Un capitolo con più argomenti deve includere almeno una mappa concettuale")
 
 
@@ -324,6 +339,8 @@ class Pipeline:
                 await self.models.close()
 
     async def _run(self):
+        run_started = time.perf_counter()
+        runtime = Counter()
         self.progress("Lettura dei PDF", 0.02, "Verifico e indicizzo ogni pagina dei documenti.")
         if self.options.mode == "demo":
             from .demo import run_demo
@@ -332,10 +349,14 @@ class Pipeline:
         if not self.settings.gemini_key.get_secret_value() or not self.settings.deepseek_key.get_secret_value():
             raise ValueError("Configura entrambe le chiavi API prima di avviare il lavoro.")
         self.progress("Verifica dell'installazione LaTeX", 0.01)
+        phase_started = time.perf_counter()
         await asyncio.to_thread(preflight_latex, self.directory / "preflight")
+        runtime["preflight_seconds"] += time.perf_counter() - phase_started
         self.check()
+        phase_started = time.perf_counter()
         pages = await asyncio.to_thread(ingest, self.directory, self.check,
                                        lambda a, b: self.progress(f"Indicizzazione {a}/{b}", 0.02 + 0.06*a/b))
+        runtime["pdf_ingest_seconds"] += time.perf_counter() - phase_started
         evidence = []
         vision_manifest = read_json(self.directory / "vision.json") if (self.directory / "vision.json").exists() else {}
         page_groups = list(adaptive_page_groups(pages, vision_manifest, self.options.pages_per_batch))
@@ -344,10 +365,16 @@ class Pipeline:
         async def read_batch(index, batch):
             checkpoint = self.directory / "evidence" / f"batch-{index:04d}.json"
             expected = [p.id for p in batch]
+            result = None
             if checkpoint.exists():
-                result = EvidenceBatch.model_validate(read_json(checkpoint))
-                validate_evidence(result, expected)
-            else:
+                try:
+                    result = EvidenceBatch.model_validate(read_json(checkpoint))
+                    validate_evidence(result, expected)
+                except (ValueError, KeyError):
+                    checkpoint.unlink(missing_ok=True)
+                    self.store.event(self.job_id,
+                        f"Lettura blocco {index+1}: checkpoint visivo precedente incompatibile; lo rigenero.")
+            if result is None:
                 result = await self.models.json("gemini", f"Lettura blocco {index+1}", prompts.READ,
                     compact_json({"pages": [{"page_id": p.id, "filename": p.filename, "page": p.number, "text": p.text} for p in batch]}),
                     EvidenceBatch, images=[self.directory / p.image for p in batch],
@@ -385,53 +412,72 @@ class Pipeline:
             return result
 
         self.progress("Lettura multimodale parallela", 0.08)
+        phase_started = time.perf_counter()
         batches = await self.parallel_map(page_groups, self.settings.gemini_concurrency, read_batch,
             lambda done, total: self.progress(f"Gemini legge le pagine · {done}/{total}", 0.08 + 0.22*done/total))
+        runtime["multimodal_read_seconds"] += time.perf_counter() - phase_started
         for result in batches:
             evidence.extend(result.pages)
         # Restore original page order even when the model returned pages in a different order.
         order = {p.id: i for i, p in enumerate(pages)}
         evidence.sort(key=lambda p: order[p.page_id])
         atomic_json(self.directory / "evidence.json", [p.model_dump() for p in evidence])
-        topics, visuals = {}, {}
+        topics, detected_visuals = {}, {}
         for page in evidence:
             for i, topic in enumerate(page.topics, 1):
                 topics[f"{page.page_id}-T{i:02d}"] = {"page_id": page.page_id, **topic.model_dump()}
             for i, visual in enumerate(page.visuals, 1):
-                visuals[f"{page.page_id}-V{i:02d}"] = {"page_id": page.page_id, **visual.model_dump()}
+                detected_visuals[f"{page.page_id}-V{i:02d}"] = {"page_id": page.page_id, **visual.model_dump()}
         if not topics:
             raise ValueError("Nessun contenuto didattico leggibile: controlla i PDF e le pagine escluse in evidence.json.")
-        self.progress("Costruzione del percorso di studio", 0.31, f"Individuati {len(topics)} argomenti e {len(visuals)} figure da spiegare.")
+        self.editorial_policy = make_editorial_policy(
+            self.options.output_profile, pages, len(topics))
+        self.detected_visuals = detected_visuals
+        atomic_json(self.directory / "editorial-policy.json", self.editorial_policy.prompt())
+        visuals = select_visuals(detected_visuals, self.options.output_profile)
+        self.progress("Costruzione del percorso di studio", 0.31,
+            f"Individuati {len(topics)} argomenti. Profilo {self.editorial_policy.label}: "
+            f"circa {self.editorial_policy.target_chapters} capitoli e {self.editorial_policy.target_words} parole; "
+            f"{len(visuals)}/{len(detected_visuals)} figure selezionate.")
         outline_file = self.directory / "outline.json"
-        if outline_file.exists():
-            plans = [ChapterPlan.model_validate(x) for x in read_json(outline_file)]
-        else:
+        guide_file = self.directory / "course-guide.json"
+
+        async def prepare_outline():
+            if outline_file.exists():
+                return [ChapterPlan.model_validate(x) for x in read_json(outline_file)]
             plans = []
-            inventories = [{"id": key, "title": value["title"], "kind": value["kind"]} for key, value in topics.items()]
-            inventory_groups = list(bounded_groups(inventories, 100, 70000))
+            units, unit_members = cluster_topic_inventory(topics)
+            inventories = [{"id": unit["id"], "title": unit["title"], "kind": unit["kind"],
+                            "occurrences": len(unit["topic_ids"])} for unit in units]
+            inventory_groups = list(bounded_groups(inventories, 200, 100000))
 
             async def plan_batch(index, batch):
+                batch_target = max(1, round(self.editorial_policy.target_chapters * len(batch) / len(inventories)))
                 return await self.models.json("deepseek", f"Indice {index+1}", prompts.PLAN,
-                    compact_json({"exam_brief": self.options.exam_brief, "topics": batch}), Outline,
-                    validate=lambda r: validate_outline(r, [t["id"] for t in batch]), tier="fast")
+                    compact_json({"exam_brief": self.options.exam_brief,
+                                  "editorial_policy": {**self.editorial_policy.prompt(),
+                                                       "target_chapters_for_this_batch": batch_target},
+                                  "topics": batch}), Outline,
+                    validate=lambda r, expected=[t["id"] for t in batch], maximum=batch_target:
+                        validate_outline_budget(r, expected, maximum), tier="fast")
 
             outlines = await self.parallel_map(inventory_groups, self.settings.deepseek_concurrency, plan_batch)
             for outline in outlines:
                 for plan in outline.chapters:
-                    # Bound writing context independently of how the planner groups topics.
-                    groups = list(bounded_groups(plan.topic_ids, 10, 60000, lambda t: topics[t]))
+                    expanded_ids = [topic_id for unit_id in plan.topic_ids for topic_id in unit_members[unit_id]]
+                    # Bound writing context independently of how the planner groups semantic units.
+                    groups = list(bounded_groups(expanded_ids,
+                        self.editorial_policy.max_topics_per_chapter, 90000, lambda t: topics[t]))
                     for n, group in enumerate(groups, 1):
                         title = plan.title + (f" - Parte {n}" if len(groups) > 1 else "")
                         plans.append(ChapterPlan(title=title[:180], topic_ids=group,
                                                  objectives=plan.objectives, prerequisites=plan.prerequisites))
             atomic_json(outline_file, [p.model_dump() for p in plans])
-        if Counter(t for p in plans for t in p.topic_ids) != Counter(topics.keys()):
-            raise ValueError("Il checkpoint dell'indice non copre gli argomenti estratti")
-        self.progress("Allineamento delle convenzioni tra capitoli", 0.33)
-        guide_file = self.directory / "course-guide.json"
-        if guide_file.exists():
-            self.course_guide = CourseGuide.model_validate(read_json(guide_file))
-        else:
+            return plans
+
+        async def prepare_course_guide():
+            if guide_file.exists():
+                return CourseGuide.model_validate(read_json(guide_file))
             guide_groups = list(bounded_groups(list(topics.items()), 100, 80000))
 
             async def guide_batch(index, batch):
@@ -445,11 +491,36 @@ class Pipeline:
                 # Merge compact extraction summaries, preserving conflicts explicitly.
                 if len(json.dumps(merged)) > 180000:
                     raise ValueError("Le convenzioni del corso superano il contesto: separa i corsi in progetti distinti.")
-                self.course_guide = await self.models.json("gemini", "Sintesi delle convenzioni", prompts.GUIDE,
+                guide = await self.models.json("gemini", "Sintesi delle convenzioni", prompts.GUIDE,
                     compact_json(merged), CourseGuide, max_output=10000)
             else:
-                self.course_guide = CourseGuide.model_validate(merged)
-            atomic_json(guide_file, self.course_guide.model_dump())
+                guide = CourseGuide.model_validate(merged)
+            atomic_json(guide_file, guide.model_dump())
+            return guide
+
+        # Planning uses DeepSeek while convention extraction uses Gemini. Running
+        # them together shortens the critical path without increasing either
+        # provider's own semaphore or weakening a validation step.
+        self.progress("Indice e convenzioni in parallelo", 0.32)
+        phase_started = time.perf_counter()
+        # Cancel the sibling deterministically if one provider fails; preserving
+        # the original exception type keeps the UI error actionable.
+        outline_task = asyncio.create_task(prepare_outline())
+        guide_task = asyncio.create_task(prepare_course_guide())
+        try:
+            await asyncio.gather(outline_task, guide_task)
+        except BaseException:
+            outline_task.cancel()
+            guide_task.cancel()
+            await asyncio.gather(outline_task, guide_task, return_exceptions=True)
+            raise
+        plans, self.course_guide = outline_task.result(), guide_task.result()
+        runtime["outline_and_guide_seconds"] += time.perf_counter() - phase_started
+        if Counter(t for p in plans for t in p.topic_ids) != Counter(topics.keys()):
+            raise ValueError("Il checkpoint dell'indice non copre gli argomenti estratti")
+        self.chapter_budgets = allocate_chapter_budgets(self.editorial_policy, plans)
+        topic_units, _ = cluster_topic_inventory(topics)
+        self.topic_clusters = topic_units
         guide_digest = hashlib.sha256(self.course_guide.model_dump_json().encode()).hexdigest()
         self.course_outline = [{"title": p.title, "topic_ids": p.topic_ids} for p in plans]
         page_map = {p.id: p for p in pages}
@@ -464,13 +535,15 @@ class Pipeline:
         async def prepare_visual(index, item):
             visual_id, value = item
             page = page_map[value["page_id"]]
-            target = self.directory / "visuals" / f"{visual_id}.png"
             visual = SourceVisual.model_validate({k: v for k, v in value.items() if k != "page_id"})
-            await asyncio.to_thread(crop_visual, self.directory, page, visual, target)
-            return visual_id, {"path": str(target), "title": value["title"],
+            asset = await asyncio.to_thread(
+                render_source_visual, visual, self.directory / "visuals", visual_id)
+            return visual_id, {**asset, "title": visual.title,
                                "reference": f"{page.document}, p. {page.number}"}
 
+        phase_started = time.perf_counter()
         prepared = await self.parallel_map(list(visuals.items()), min(4, max(1, len(visuals))), prepare_visual)
+        runtime["source_vector_render_seconds"] += time.perf_counter() - phase_started
         assets.update(dict(prepared))
         documents = read_json(self.directory / "inputs.json")
 
@@ -482,17 +555,19 @@ class Pipeline:
             chapter_dir.mkdir(parents=True, exist_ok=True)
             final = chapter_dir / "final.json"
             visual_ids = visual_assignments[index]
+            editorial_budget = self.chapter_budgets[index]
             saved = read_json(final) if final.exists() else None
             if saved and saved.get("guide_digest") == guide_digest:
                 lesson, review = Lesson.model_validate(saved["lesson"]), Review.model_validate(saved["review"])
-                validate_lesson(lesson, plan.topic_ids, visual_ids)
+                validate_chapter_lesson(lesson, plan.topic_ids, visual_ids, visuals, editorial_budget)
                 stored_timing = saved.get("timing")
                 timing = (stored_timing if isinstance(stored_timing, dict)
                           else {"resumed": True, "phase_seconds": {}})
                 timing["resumed"] = True
             else:
                 lesson, review = await self.chapter(index, plan, chapter_dir, topics, visuals, visual_ids,
-                                                    page_map, assets, refs, documents, phase_times)
+                                                    page_map, assets, refs, documents, phase_times,
+                                                    editorial_budget)
                 timing = {"resumed": False, "phase_seconds": {key: round(value, 2)
                           for key, value in phase_times.items()}}
                 atomic_json(final, {"lesson": lesson.model_dump(), "review": review.model_dump(),
@@ -508,12 +583,16 @@ class Pipeline:
         self.store.event(self.job_id,
             f"Mantengo attivi fino a {chapter_concurrency} capitoli indipendenti; i limiti API restano "
             f"Gemini {self.settings.gemini_concurrency} e DeepSeek {self.settings.deepseek_concurrency}.")
+        phase_started = time.perf_counter()
         chapter_results = await self.parallel_map(plans, chapter_concurrency, produce_chapter,
             lambda done, total: self.progress(f"Capitoli completati · {done}/{total}", 0.34 + 0.46*done/total))
+        runtime["chapter_pipeline_seconds"] += time.perf_counter() - phase_started
         lessons = [result[0] for result in chapter_results]
         reviews = [result[1] for result in chapter_results]
         chapter_timings = [result[2] for result in chapter_results]
+        editorial_metrics = validate_book_budget(lessons, self.editorial_policy)
         self.progress("Verifica del programma d'esame", 0.81)
+        phase_started = time.perf_counter()
         audit_reviews = []
         # Hierarchical audit: an exhaustive inventory is provided in bounded batches. A final
         # syllabus audit uses all chapter titles/objectives without the lengthy source text.
@@ -533,26 +612,36 @@ class Pipeline:
                    for plan, lesson in zip(plans, lessons)]
         catalog_text = json.dumps(catalog, ensure_ascii=False)
         if len(catalog_text) <= 180000:
+            appendices = ["Fonti e tracciabilità dei documenti caricati."]
+            if self.editorial_policy.append_recall_answers:
+                appendices.insert(0,
+                    "Risposte al richiamo attivo: ogni domanda dei capitoli è seguita dalla sua risposta motivata.")
             audit = await self.models.json("gemini", "Copertura del programma", prompts.AUDIT,
-                compact_json({"exam_brief": self.options.exam_brief, "catalog": catalog,
-                            "document_structure": {"appendices": [
-                                "Risposte al richiamo attivo: ogni domanda dei capitoli è seguita dalla sua risposta motivata.",
-                                "Fonti e tracciabilità dei documenti caricati."]}}), Review)
+                compact_json({"exam_brief": self.options.exam_brief,
+                            "editorial_policy": self.editorial_policy.prompt(), "catalog": catalog,
+                            "document_structure": {"appendices": appendices}}), Review)
             audit_reviews.append(audit.model_dump())
         else:
             audit_reviews.append({"passed": False, "issues": [{"severity": "major", "message":
                 "Indice molto esteso: confronto globale con il programma non eseguito. Verificare la copertura manualmente."}]})
+        runtime["curriculum_audit_seconds"] += time.perf_counter() - phase_started
         report = self.report(pages, evidence, topics, visuals, plans, lessons, reviews, audit_reviews)
+        report["editorial"] = editorial_metrics
+        report["visual_projection"] = {"detected": len(detected_visuals),
+                                       "selected": len(visuals)}
         report["performance"] = {"chapter_pipeline_concurrency": chapter_concurrency,
                                  "provider_limits_unchanged": True,
-                                 "chapters": chapter_timings}
+                                 "chapters": chapter_timings,
+                                 "phase_seconds": {}}
         report["course_guide"] = self.course_guide.model_dump()
         report["issues"].extend(self.course_guide.conflicts)
         output = self.directory / "output"
         printed_issues = list(report["issues"])
         self.progress("Composizione e compilazione LaTeX", 0.86, "Creo il PDF con testo selezionabile, formule e figure.")
+        phase_started = time.perf_counter()
         diagnostics = await asyncio.to_thread(build_book, output, self.options.title, [p.model_dump() for p in plans],
-            lessons, assets, refs, documents, report)
+            lessons, assets, refs, documents, report, self.options.mode, self.options.output_profile)
+        runtime["final_latex_seconds"] += time.perf_counter() - phase_started
         report["layout"] = diagnostics
         self.add_layout_issues(report, diagnostics)
         self.check()
@@ -592,8 +681,10 @@ class Pipeline:
             return {"kind": kind, "files": [path.name for path in batch], "review": review}
 
         self.progress("Controllo visivo gerarchico del PDF", 0.9)
+        phase_started = time.perf_counter()
         reviewed = await self.parallel_map(review_jobs, self.settings.gemini_concurrency, review_layout,
             lambda done, total: self.progress(f"Controllo visivo · {done}/{total}", 0.9 + 0.07*done/total))
+        runtime["layout_review_seconds"] += time.perf_counter() - phase_started
         layout_reviews = []
         for item in reviewed:
             layout_review = item["review"]
@@ -609,8 +700,10 @@ class Pipeline:
                                          f"{len(layout_scan['detailed_pages'])} pagine a rischio controllate anche a piena risoluzione.")
         if report["issues"] != printed_issues:
             report["reviewed_layout"] = diagnostics
+            phase_started = time.perf_counter()
             report["layout"] = await asyncio.to_thread(build_book, output, self.options.title, [p.model_dump() for p in plans],
-                lessons, assets, refs, documents, report)
+                lessons, assets, refs, documents, report, self.options.mode, self.options.output_profile)
+            runtime["final_latex_seconds"] += time.perf_counter() - phase_started
             report["final_front_matter_updated"] = True
             report["layout_review_scope"] += " L'elenco iniziale dei rilievi è stato aggiornato dopo la revisione; la versione finale è ricompilata e controllata dal compilatore, senza un secondo giro visivo."
             self.add_layout_issues(report, report["layout"])
@@ -623,24 +716,46 @@ class Pipeline:
         if unseen_local_issues:
             report["issues"].extend(unseen_local_issues)
             report["issues"] = list(dict.fromkeys(report["issues"]))
+            phase_started = time.perf_counter()
             report["layout"] = await asyncio.to_thread(build_book, output, self.options.title,
-                [p.model_dump() for p in plans], lessons, assets, refs, documents, report)
+                [p.model_dump() for p in plans], lessons, assets, refs, documents, report,
+                self.options.mode, self.options.output_profile)
+            runtime["final_latex_seconds"] += time.perf_counter() - phase_started
             self.add_layout_issues(report, report["layout"])
             report["issues"] = list(dict.fromkeys(report["issues"]))
             report["final_local_layout_scan"] = await asyncio.to_thread(
                 inspect_pdf_layout, output / "dispensa.pdf")
+        report["performance"]["phase_seconds"] = {
+            key: round(value, 2) for key, value in runtime.items()
+        }
+        report["performance"]["wall_seconds"] = round(time.perf_counter() - run_started, 2)
         await self.finish(output, report, plans, lessons)
 
     async def chapter(self, index, plan, folder, topics, visuals, visual_ids, page_map, assets, refs,
-                      documents, phase_times=None):
+                      documents, phase_times=None, editorial_budget=None):
         phase_times = phase_times if phase_times is not None else Counter()
+        editorial_budget = editorial_budget or {
+            "profile": "transcript", "label": "Compatibilità", "intent": "Versione completa",
+            "target_words": 30000, "hard_max_words": 60000, "max_sections": 30,
+            "max_paragraphs": 200, "max_exercises": 20, "max_recall": 20,
+            "max_concept_maps": 3, "max_authored_charts": 6,
+            "allow_generated_exercises": True, "require_concept_map": True,
+        }
         # Common, potentially cacheable content stays at the beginning. Both Gemini
         # implicit caching and DeepSeek disk caching match repeated request prefixes.
+        relevant_clusters = [{"canonical_title": unit["title"],
+                              "topic_ids": [topic_id for topic_id in unit["topic_ids"]
+                                            if topic_id in plan.topic_ids]}
+                             for unit in getattr(self, "topic_clusters", [])
+                             if any(topic_id in plan.topic_ids for topic_id in unit["topic_ids"])]
         context = {"exam_brief": self.options.exam_brief,
+                   "editorial_budget": editorial_budget,
+                   "topic_clusters": relevant_clusters,
                    "course_guide": self.course_guide.model_dump(),
                    "course_outline": [{"title": chapter["title"], "current": position == index}
                                        for position, chapter in enumerate(self.course_outline)],
-                   "source_visual_catalog": source_visual_catalog(visuals),
+                   "source_visual_catalog": source_visual_catalog(
+                       getattr(self, "detected_visuals", visuals)),
                    "plan": plan.model_dump(),
                    "topics": {t: topics[t] for t in plan.topic_ids},
                    "source_page_context": source_page_context(topics, plan.topic_ids),
@@ -649,8 +764,10 @@ class Pipeline:
         # For born-digital pages, raw extracted text is cheaper and sharper than
         # resending a full-page raster. Scans stay attached; figure crops stay attached.
         raw_source_text = {page_id: getattr(page_map[page_id], "text", "") for page_id in reviewed_page_ids}
+        visual_page_ids = {visuals[visual_id]["page_id"] for visual_id in visual_ids}
         source_images = [self.directory / page_map[page_id].image for page_id in reviewed_page_ids
-                         if len(getattr(page_map[page_id], "text", "").strip()) < 160]
+                         if (len(getattr(page_map[page_id], "text", "").strip()) < 160
+                             or page_id in visual_page_ids)]
         feedback = None
         last_lesson = None
         initial_tier = chapter_model_tier(plan, topics)
@@ -661,7 +778,7 @@ class Pipeline:
             if draft_file.exists():
                 try:
                     lesson = Lesson.model_validate(read_json(draft_file))
-                    validate_chapter_lesson(lesson, plan.topic_ids, visual_ids, visuals)
+                    validate_chapter_lesson(lesson, plan.topic_ids, visual_ids, visuals, editorial_budget)
                     self.store.event(self.job_id,
                         f"Capitolo {index+1}: riprendo la bozza locale già generata senza una nuova chiamata.")
                 except (ValueError, KeyError):
@@ -678,15 +795,17 @@ class Pipeline:
                             f"Capitolo {index+1}, revisione incrementale {attempt}", prompts.REVISE,
                             compact_json(payload), LessonPatch,
                             validate=lambda patch, base=last_lesson: validate_chapter_lesson(
-                                apply_lesson_patch(base, patch), plan.topic_ids, visual_ids, visuals),
-                            max_output=12000, tier="quality")
+                                apply_lesson_patch(base, patch), plan.topic_ids, visual_ids, visuals,
+                                editorial_budget),
+                            max_output=min(12000, max(5000, editorial_budget["hard_max_words"] * 2)),
+                            tier="quality")
                     finally:
                         phase_times["deepseek_seconds"] += time.perf_counter() - phase_started
                     # Simple test/replay adapters from StudyGenius 1.1 may return a
                     # complete Lesson directly; live validated providers return LessonPatch.
                     lesson = (revision if isinstance(revision, Lesson)
                               else apply_lesson_patch(last_lesson, revision))
-                    validate_chapter_lesson(lesson, plan.topic_ids, visual_ids, visuals)
+                    validate_chapter_lesson(lesson, plan.topic_ids, visual_ids, visuals, editorial_budget)
                     if isinstance(revision, LessonPatch):
                         atomic_json(folder / f"patch-{attempt}.json", revision.model_dump(mode="json"))
                 else:
@@ -695,8 +814,10 @@ class Pipeline:
                     try:
                         lesson = await self.models.json("deepseek", f"Capitolo {index+1}, stesura iniziale", prompts.WRITE,
                             compact_json(context), Lesson,
-                            validate=lambda r: validate_chapter_lesson(r, plan.topic_ids, visual_ids, visuals),
-                            max_output=32000, tier=tier)
+                            validate=lambda r: validate_chapter_lesson(
+                                r, plan.topic_ids, visual_ids, visuals, editorial_budget),
+                            max_output=min(32000, max(6000, editorial_budget["hard_max_words"] * 2)),
+                            tier=tier)
                     finally:
                         phase_times["deepseek_seconds"] += time.perf_counter() - phase_started
             last_lesson = lesson
@@ -705,7 +826,8 @@ class Pipeline:
             phase_started = time.perf_counter()
             try:
                 lesson, preview_diagnostics = await self.compile_preview_with_repair(
-                    index, attempt, plan, lesson, folder, topics, visuals, visual_ids, assets, refs, documents)
+                    index, attempt, plan, lesson, folder, topics, visuals, visual_ids, assets, refs,
+                    documents, editorial_budget)
             except LatexError as exc:
                 if attempt == self.options.review_rounds:
                     raise
@@ -724,6 +846,8 @@ class Pipeline:
             finally:
                 phase_times["visual_render_seconds"] += time.perf_counter() - phase_started
             review_context = {"exam_brief": self.options.exam_brief,
+                              "editorial_budget": editorial_budget,
+                              "topic_clusters": context["topic_clusters"],
                               "course_guide": self.course_guide.model_dump(),
                               "source_visual_catalog": context["source_visual_catalog"],
                               "plan": plan.model_dump(),
@@ -731,7 +855,7 @@ class Pipeline:
                               "visuals": context["visuals"], "raw_source_text": raw_source_text,
                               "lesson": lesson.model_dump(), "latex_diagnostics": preview_diagnostics,
                               "reviewed_page_ids": reviewed_page_ids}
-            review_images = [*source_images, *[Path(assets[v]["path"]) for v in visual_ids],
+            review_images = [*source_images, *[Path(assets[v]["review_path"]) for v in visual_ids],
                              *chart_images, *map_images]
             review_file = folder / f"review-{attempt}.json"
             saved_review = None
@@ -770,27 +894,21 @@ class Pipeline:
             if review.accepted or attempt == self.options.review_rounds:
                 return lesson, review
             feedback = review.model_dump()
-            # Scientific feedback must not shrink a readable table into a whole page.
-            bad_crop = any(i.severity in ("major", "blocker") and
-                           any(word in (i.target + " " + i.message + " " + i.correction).lower()
-                               for word in ("ritagl", "crop")) for i in review.issues)
-            for visual_id in visual_ids if bad_crop else []:
-                from .models import SourceVisual
-                value = visuals[visual_id]
-                full = SourceVisual(title=value["title"], description=value["description"], bbox=[0, 0, 1000, 1000])
-                await asyncio.to_thread(crop_visual, self.directory, page_map[value["page_id"]], full, Path(assets[visual_id]["path"]))
             self.store.event(self.job_id, f"Capitolo {index+1}: DeepSeek corregge i rilievi di Gemini ({attempt+1}/{self.options.review_rounds}).")
         raise RuntimeError("Nessuna versione del capitolo completata")
 
     async def compile_preview_with_repair(self, index, attempt, plan, lesson, folder, topics,
-                                          visuals, visual_ids, assets, refs, documents):
+                                          visuals, visual_ids, assets, refs, documents,
+                                          editorial_budget):
         """Compile first; on failure ask the fast text model for narrow field replacements."""
         current = lesson
         last_error = None
         for repair_round in range(3):
             try:
                 diagnostics = await asyncio.to_thread(build_book, folder / "preview", current.title,
-                    [plan.model_dump()], [current], assets, refs, documents, {"issues": ["Anteprima di lavoro"]})
+                    [plan.model_dump()], [current], assets, refs, documents,
+                    {"issues": ["Anteprima di lavoro"]}, self.options.mode,
+                    self.options.output_profile, True)
                 return current, diagnostics
             except LatexError as exc:
                 last_error = exc
@@ -805,7 +923,8 @@ class Pipeline:
                     validate=lambda value, base=current: apply_lesson_repair(base, value),
                     max_output=6000, tier="fast")
                 current = apply_lesson_repair(current, repair)
-                validate_chapter_lesson(current, plan.topic_ids, visual_ids, visuals)
+                validate_chapter_lesson(current, plan.topic_ids, visual_ids, visuals,
+                                        editorial_budget)
                 atomic_json(folder / f"draft-{attempt}-latex-{repair_round+1}.json", current.model_dump())
                 self.store.event(self.job_id,
                     f"Capitolo {index+1}: applicata una correzione LaTeX testuale; ricompilo localmente.")

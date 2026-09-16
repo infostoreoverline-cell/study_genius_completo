@@ -4,7 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from studygenius.demo import demo_content
-from studygenius.models import EvidenceBatch, Outline, PageAnalysis, Series, SourceVisual
+from studygenius.models import (AsseGrafico, CurvaAnalitica, EvidenceBatch, Outline,
+                                PageAnalysis, SchedaAnaliticaGrafico, Series, SourceVisual)
 from studygenius.pipeline import bounded_groups, validate_evidence, validate_lesson, validate_outline
 from studygenius.render import escape, plot_text, rich, safe_math, validate_lesson_math, wrap_display_math
 
@@ -44,13 +45,24 @@ def test_scientific_math_and_untrusted_prose():
     assert r"\Delta" in safe_math("ΔU=0")
 
 
-def test_numerical_charts_and_crops_reject_invalid_data():
+def test_numerical_charts_and_vector_schemas_reject_invalid_data():
     with pytest.raises(ValidationError):
         Series(label="x", x=[1,2], y=[1,math.inf])
     with pytest.raises(ValidationError):
         Series(label="x", x=[1,2], y=[1,2,3])
     with pytest.raises(ValidationError):
-        SourceVisual(title="Bad", description="A meaningful description", bbox=[100,0,50,1000])
+        AsseGrafico(label="x" * 26)
+    with pytest.raises(ValidationError):
+        CurvaAnalitica(label="c", x=[1,2], y=[1,2], parameters={"a":1},
+                       interpretation="Descrizione analitica valida")
+    card = SchedaAnaliticaGrafico(
+        x_axis=AsseGrafico(label="Conversione"), y_axis=AsseGrafico(label="Velocità"),
+        curves=[CurvaAnalitica(label="c", x=[0,1], y=[0,1],
+                              interpretation="Andamento lineare dichiarato")],
+        source_basis="qualitative", physical_chemical_meaning="Significato chimico dichiarato con prudenza.",
+        analytical_steps=["Confrontare gli estremi."], limitations="Schema qualitativo.")
+    with pytest.raises(ValidationError):
+        SourceVisual(title="Bad", kind="chart", chart=card, concept_map={"nodes":[]})
 
 
 def test_known_figures_from_other_chapters_do_not_invalidate_the_lesson():

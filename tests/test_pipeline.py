@@ -9,7 +9,9 @@ import pytest
 from studygenius import prompts
 from studygenius.config import Settings
 from studygenius.demo import demo_content, make_source
-from studygenius.models import CourseGuide, EvidenceBatch, JobOptions, PageAnalysis, Review, SourceVisual, Topic
+from studygenius.models import (AsseGrafico, CourseGuide, CurvaAnalitica, EvidenceBatch,
+                                JobOptions, PageAnalysis, Review, SchedaAnaliticaGrafico,
+                                SourceVisual, Topic)
 from studygenius.pipeline import Pipeline
 from studygenius.providers import Models
 from studygenius.render import latex_engine
@@ -58,11 +60,9 @@ async def test_chapter_context_includes_source_data_and_other_page_figures(tmp_p
     pipeline.models = SimpleNamespace(json=response)
     monkeypatch.setattr("studygenius.pipeline.build_book", lambda *args: {})
     monkeypatch.setattr("studygenius.pipeline.render_charts", lambda *args: [])
-    def unexpected_crop(*args):
-        raise AssertionError("Un rilievo scientifico non deve cambiare i ritagli")
-    monkeypatch.setattr("studygenius.pipeline.crop_visual", unexpected_crop)
     arguments = (0, plan, folder, topics, visuals, ["D001-P0001-V01"], page_map,
-                 {"D001-P0001-V01": {"path": str(tmp_path / "figure.png")}}, {}, [])
+                 {"D001-P0001-V01": {"path": str(tmp_path / "figure.pdf"),
+                                          "review_path": str(tmp_path / "figure.png")}}, {}, [])
     await pipeline.chapter(*arguments)
     assert len(seen) == 2
     checkpoint = json.loads((folder / "review-1.json").read_text())
@@ -80,7 +80,15 @@ async def test_complete_live_pipeline_with_replayed_provider_responses_and_resum
     """HTTP is replayed; ingestion, accounting, cache, reviews and LaTeX are the real code."""
     plan,lesson=demo_content()
     lesson.introduction += " Notazione di controllo: pV^γ, V_10, ∫ p dV e ΔU=0 ⇒ q=-w."
-    visual=SourceVisual(title="Isoterma del gas ideale",bbox=[50,320,950,780],description="Volume in litri; pressione in kPa; curva isoterma decrescente.")
+    visual=SourceVisual(title="Isoterma del gas ideale",kind="chart",chart=SchedaAnaliticaGrafico(
+        x_axis=AsseGrafico(label="Volume",unit="L"),y_axis=AsseGrafico(label="Pressione",unit="kPa"),
+        curves=[CurvaAnalitica(label="T = 300 K",formula_latex=r"p=\frac{nRT}{V}",
+            parameters={"n":1.0,"T":300.0,"R":8.314},x=[10,12,14,16,18,20],
+            y=[249.42,207.85,178.157142857,155.8875,138.566666667,124.71],
+            interpretation="Pressione inversamente proporzionale al volume.")],
+        source_basis="tabulated_data",physical_chemical_meaning="Isoterma di un gas ideale a 300 K.",
+        analytical_steps=["Applicare p=nRT/V ai volumi tabulati."],
+        limitations="Modello ideale con dati calcolati."))
     evidence=EvidenceBatch(pages=[
         PageAnalysis(page_id="D001-P0001",topics=[Topic(title="Gas ideale",content="Gas ideale: pV=nRT. Una mole, 300 K, R=8.314 J/(mol K). "+lesson.sections[0].paragraphs[0],kind="theory")],visuals=[visual]),
         PageAnalysis(page_id="D001-P0002",topics=[Topic(title="Lavoro e primo principio",content=lesson.exercises[0].question+" "+" ".join(lesson.exercises[0].requested_points),kind="exercise")])])
@@ -127,7 +135,7 @@ async def test_complete_live_pipeline_with_replayed_provider_responses_and_resum
         assert "Punto 3" in text and "Richiamo attivo" in text and "Fonti" in text
     with zipfile.ZipFile(output/"sorgenti.zip") as archive:
         assert "dispensa.tex" in archive.namelist()
-        assert any(n.endswith(".svg") for n in archive.namelist())
+        assert any(n.endswith(".pdf") and "map-" in n for n in archive.namelist())
         for name in archive.namelist():
             assert "settings" not in name and ".env" not in name
             assert b"TEST_ONLY" not in archive.read(name)

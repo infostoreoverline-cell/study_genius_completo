@@ -44,6 +44,13 @@
           </label>
           <input id="files" type="file" accept=".pdf,application/pdf" multiple class="visually-hidden">
           <ul id="file-list" class="file-list" aria-live="polite"></ul>
+          <label for="output-profile">Che tipo di documento vuoi?</label>
+          <select id="output-profile">
+            <option value="summary">Riassunto breve · seleziona e comprime</option>
+            <option value="study" selected>Dispensa ragionata · spiega senza dilatare</option>
+            <option value="transcript">Sbobina estesa · conserva più passaggi</option>
+          </select>
+          <p class="field-help">Il riassunto breve ha un limite editoriale reale: unisce le ripetizioni, non inventa esercizi e non duplica le risposte in appendice.</p>
           <div class="label-row"><label for="exam-brief">Programma e indicazioni per l’esame</label><span>CONSIGLIATO</span></div>
           <textarea id="exam-brief" rows="4" maxlength="12000" placeholder="Incolla il programma ufficiale, gli argomenti richiesti e il tipo di prova. Es.: scritto con esercizi e orale; spiegare tutti i passaggi di calcolo."></textarea>
           <p class="field-help">Serve a individuare ciò che manca nelle fonti rispetto a ciò che ti verrà chiesto.</p>

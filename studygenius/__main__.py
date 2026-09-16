@@ -14,11 +14,13 @@ def main():
     args = parser.parse_args()
     from .config import data_root, load_settings
     from .render import latex_engine
+    from .renderers import graphviz_engine
     root = data_root()
     if args.command == "doctor":
         settings = load_settings(root)
         print("StudyGenius - diagnostica locale")
         print("LaTeX:", latex_engine() or "MANCANTE: installa MiKTeX o TeX Live con XeLaTeX")
+        print("Graphviz:", graphviz_engine() or "MANCANTE: installa Graphviz e aggiungi dot al PATH")
         print("Gemini:", "configurato" if settings.public()["gemini_configured"] else "da configurare nell'interfaccia")
         print("DeepSeek:", "configurato" if settings.public()["deepseek_configured"] else "da configurare nell'interfaccia")
         print("Dati:", root)

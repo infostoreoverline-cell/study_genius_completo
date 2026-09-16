@@ -1,8 +1,17 @@
-# Refactoring prestazioni, visuali e prompt · StudyGenius 1.3
+# Refactoring prestazioni, visuali e prompt · StudyGenius 1.6
 
 ## Obiettivo misurabile
 
 Il refactoring riduce pixel inviati, contesti ripetuti, chiamate di revisione e tempi morti senza rimuovere i controlli di copertura scientifica. La qualità resta protetta dagli stessi contratti Pydantic, dalla compilazione reale, dalla revisione incrociata e da fallback ad alta fedeltà. “Zero regressioni” è trattato come un gate di test e revisione, non come una promessa assoluta sulla risposta probabilistica dei modelli.
+
+## Interventi 1.6
+
+| Collo di bottiglia | Implementazione | Evidenza locale su Elettrochimica (50 slide) | Gate di qualità |
+| --- | --- | --- | --- |
+| Indice e guida eseguiti in sequenza | Avvio contemporaneo su DeepSeek e Gemini, con cancellazione del fratello al primo errore | Si elimina dal cammino critico la durata della fase più breve | Semafori e validazioni dei due provider restano invariati |
+| Libro completo ricompilato per ogni anteprima | Corpo del capitolo e asset reali, un solo passaggio LaTeX, senza copertina/indice/appendici | 1,49 s contro 1,94 s per lo stesso TeX multipass (−23,1% nel benchmark locale) | Il PDF finale mantiene fino a quattro passaggi, scansione geometrica e review visiva |
+| Loghi ripetuti scambiati per figure scientifiche | Le immagini sotto l'1% della pagina sono decorative; formule e disegni vettoriali restano segnali indipendenti | 5 slide testuali passano a 108 DPI; pixel −25,12%, byte −35,41% rispetto a 150 DPI fissi | 45 slide tecniche restano a 132 DPI; incertezza di lettura attiva ancora 190 DPI |
+| Diagnosi difficile sui run lunghi | Tempi di preflight, ingestione, lettura, indice/guida, capitoli, audit, LaTeX e review nel rapporto | L'indicizzazione reale richiede 2,58 s; la ripresa dal checkpoint 0,001 s | Nessun prompt, risposta o segreto entra nella telemetria |
 
 ## Interventi 1.2
 

@@ -17,7 +17,7 @@ import fitz
 from PIL import Image
 
 
-VISION_POLICY_VERSION = "2"
+VISION_POLICY_VERSION = "3"
 
 
 @dataclass(frozen=True)
@@ -38,10 +38,23 @@ def _page_signals(page: fitz.Page, text: str) -> dict:
                 if span.get("text", "").strip():
                     sizes.append(float(span.get("size", 0)))
     math_marks = len(re.findall(r"[=+−±√∫∑∂Δα-ω_^]|\b(?:sin|cos|ln|exp)\b", text))
+    # Slide decks often repeat a tiny logo on every page. Treating that mark as
+    # a scientific image needlessly promotes the whole document to the heavier
+    # vision profile. Keep only images that occupy a meaningful part of the
+    # page; dense equations and vector diagrams are detected independently.
+    image_areas = []
+    page_area = max(1.0, page.rect.get_area())
+    for info in page.get_image_info(xrefs=True):
+        try:
+            image_areas.append(fitz.Rect(info["bbox"]).get_area() / page_area)
+        except (KeyError, TypeError, ValueError):
+            image_areas.append(0.0)
+    significant_images = sum(area >= 0.01 for area in image_areas)
     return {
         "text_chars": len(text.strip()),
         "min_font_pt": round(min(sizes), 2) if sizes else None,
-        "embedded_images": len(page.get_images(full=True)),
+        "embedded_images": significant_images,
+        "decorative_images": len(image_areas) - significant_images,
         "vector_drawings": len(page.get_drawings()),
         "math_marks": math_marks,
     }
@@ -60,7 +73,7 @@ def choose_vision_policy(page: fitz.Page, text: str, high_fidelity: bool = False
     elif signals["min_font_pt"] is not None and signals["min_font_pt"] < 7:
         policy = VisionPolicy("small-text", 160, 2250, 87, 1_200_000,
                               "Testo o formule con caratteri inferiori a 7 pt.")
-    elif (signals["embedded_images"] or signals["vector_drawings"] >= 5
+    elif (signals["embedded_images"] or signals["vector_drawings"] >= 12
           or signals["math_marks"] >= 12 or signals["text_chars"] >= 2200):
         policy = VisionPolicy("technical", 132, 1900, 84, 900_000,
                               "Grafici, formule o contenuto denso richiedono dettaglio intermedio.")

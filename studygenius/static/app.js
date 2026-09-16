@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 let token = "", files = [], selectedJob = null, polling = false, lastLimitsJob = null;
 const states = {ready:"Pronto",queued:"In coda",running:"In elaborazione",paused:"In pausa",failed:"Da riprendere",completed:"Completato",needs_review:"Pronto · da verificare"};
+const profileLabels = {summary:"RIASSUNTO BREVE",study:"DISPENSA RAGIONATA",transcript:"SBOBINA ESTESA"};
 const number = n => Number(n || 0).toLocaleString("it-IT");
 let toastTimer;
 function toast(message) { $("toast").textContent = message; $("toast").hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").hidden = true, 9000); }
@@ -81,7 +82,7 @@ async function refreshJob() {
   const id = selectedJob, job = await api("/api/jobs/" + id);
   if (selectedJob !== id) return;
   $("breadcrumb").textContent = job.title; $("job-title").textContent = job.title;
-  $("job-mode").textContent = job.options.mode === "demo" ? "DIMOSTRAZIONE OFFLINE · NESSUNA CHIAMATA API" : "LA TUA DISPENSA";
+  $("job-mode").textContent = job.options.mode === "demo" ? "DIMOSTRAZIONE OFFLINE · NESSUNA CHIAMATA API" : (profileLabels[job.options.output_profile] || "LA TUA DISPENSA");
   $("job-status").textContent = states[job.status]; $("job-stage").textContent = job.stage;
   $("job-progress").value = job.progress; $("job-percent").textContent = Math.round(job.progress * 100) + "%";
   $("job-error").textContent = job.error; $("job-error").hidden = !job.error;
@@ -117,7 +118,7 @@ $("project-form").onsubmit = event => {
   event.preventDefault(); guarded($("create-button"), async () => {
     if (!files.length) throw new Error("Aggiungi almeno un PDF per cominciare.");
     const data = new FormData();
-    const options = {title:$("title").value.trim(),exam_brief:$("exam-brief").value,review_rounds:Number($("rounds").value),max_api_calls:Number($("max-calls").value),max_total_tokens:Number($("max-tokens").value),pages_per_batch:Number($("batch-pages").value)};
+    const options = {title:$("title").value.trim(),exam_brief:$("exam-brief").value,output_profile:$("output-profile").value,review_rounds:Number($("rounds").value),max_api_calls:Number($("max-calls").value),max_total_tokens:Number($("max-tokens").value),pages_per_batch:Number($("batch-pages").value)};
     data.append("options",JSON.stringify(options)); files.forEach(file=>data.append("files",file));
     const job=await api("/api/jobs",{method:"POST",body:data}); await showJob(job.id);
     await api(`/api/jobs/${job.id}/start`,{method:"POST"}); await refreshJob();

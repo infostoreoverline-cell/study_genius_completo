@@ -16,7 +16,7 @@ from .config import Settings
 from .storage import Store, atomic_json, read_json
 
 T = TypeVar("T", bound=BaseModel)
-PROMPT_VERSION = "2.1.0"
+PROMPT_VERSION = "4.0.0"
 
 
 class ProviderError(RuntimeError):
