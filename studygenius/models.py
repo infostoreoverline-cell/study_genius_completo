@@ -17,7 +17,7 @@ class JobOptions(Contract):
     review_rounds: int = Field(default=2, ge=1, le=4)
     max_api_calls: int = Field(default=300, ge=1, le=10000)
     max_total_tokens: int = Field(default=2_000_000, ge=1000, le=100_000_000)
-    pages_per_batch: int = Field(default=2, ge=1, le=4)
+    pages_per_batch: int = Field(default=4, ge=1, le=4)
 
 
 class SourcePage(Contract):
@@ -157,6 +157,44 @@ class Chart(Contract):
     explanation: str = Field(min_length=10)
 
 
+class ConceptNode(Contract):
+    id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+    label: str = Field(min_length=1, max_length=90)
+    detail: str = Field(default="", max_length=180)
+    kind: Literal["concept", "law", "process", "example", "warning"] = "concept"
+
+
+class ConceptEdge(Contract):
+    source: str
+    target: str
+    label: str = Field(min_length=1, max_length=70)
+    kind: Literal["leads_to", "depends_on", "contains", "contrasts", "explains"] = "leads_to"
+
+
+class ConceptMap(Contract):
+    title: str = Field(min_length=1, max_length=180)
+    topic_ids: list[str] = Field(min_length=1)
+    nodes: list[ConceptNode] = Field(min_length=3, max_length=14)
+    edges: list[ConceptEdge] = Field(min_length=2, max_length=24)
+    reading_path: list[str] = Field(min_length=2, max_length=8)
+    explanation: str = Field(min_length=20, max_length=3000)
+
+    @model_validator(mode="after")
+    def valid_graph(self):
+        node_ids = [node.id for node in self.nodes]
+        if len(node_ids) != len(set(node_ids)):
+            raise ValueError("Gli id dei nodi della mappa devono essere unici")
+        known = set(node_ids)
+        if any(edge.source not in known or edge.target not in known for edge in self.edges):
+            raise ValueError("Ogni collegamento deve riferirsi a nodi esistenti")
+        if any(edge.source == edge.target for edge in self.edges):
+            raise ValueError("Una mappa concettuale non può contenere auto-collegamenti")
+        connected = {edge.source for edge in self.edges} | {edge.target for edge in self.edges}
+        if connected != known:
+            raise ValueError("Ogni nodo della mappa deve partecipare ad almeno un collegamento")
+        return self
+
+
 class Lesson(Contract):
     title: str = Field(min_length=1, max_length=180)
     introduction: str = Field(min_length=20)
@@ -164,6 +202,7 @@ class Lesson(Contract):
     exercises: list[Exercise] = Field(min_length=1, max_length=20)
     recall: list[Recall] = Field(min_length=3, max_length=20)
     visuals: list[VisualExplanation] = Field(default_factory=list, max_length=60)
+    concept_maps: list[ConceptMap] = Field(default_factory=list, max_length=3)
     charts: list[Chart] = Field(default_factory=list, max_length=6)
     recap: list[str] = Field(min_length=2)
     uncertainties: list[str] = Field(default_factory=list)
@@ -180,6 +219,30 @@ class TextReplacement(Contract):
 class LessonRepair(Contract):
     base_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     replacements: list[TextReplacement] = Field(min_length=1, max_length=12)
+
+
+class LessonPatchOperation(Contract):
+    """A bounded RFC-6902-like operation used for scientific review revisions."""
+    op: Literal["add", "replace", "remove"]
+    path: str = Field(
+        pattern=r"^/(?:title|introduction|sections|exercises|recall|visuals|concept_maps|charts|recap|uncertainties)(?:/(?:-|[A-Za-z0-9_-]+))*$",
+        max_length=300,
+    )
+    value: dict | list | str | int | float | bool | None = None
+    reason: str = Field(min_length=5, max_length=500)
+
+    @model_validator(mode="after")
+    def value_matches_operation(self):
+        if self.op in ("add", "replace") and self.value is None:
+            raise ValueError("add/replace richiedono value")
+        if self.op == "remove" and self.value is not None:
+            raise ValueError("remove non accetta value")
+        return self
+
+
+class LessonPatch(Contract):
+    base_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    operations: list[LessonPatchOperation] = Field(min_length=1, max_length=40)
 
 
 class Issue(Contract):

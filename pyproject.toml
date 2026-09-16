@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "studygenius-local"
-version = "1.1.0"
+version = "1.2.0"
 description = "Dai PDF a una dispensa universitaria: Gemini, DeepSeek e LaTeX sul tuo PC."
 requires-python = ">=3.11"
 dependencies = [

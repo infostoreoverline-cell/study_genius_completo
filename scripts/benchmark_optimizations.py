@@ -11,7 +11,9 @@ from pathlib import Path
 
 import fitz
 
-from studygenius.models import Lesson
+from studygenius.demo import demo_content
+from studygenius.models import Lesson, LessonPatch
+from studygenius.pipeline import lesson_sha256
 from studygenius.render import create_layout_review_assets, inspect_pdf_layout
 from studygenius.vision import render_page_for_vision
 
@@ -55,7 +57,7 @@ def benchmark_layout(pdf: Path, work: Path) -> dict:
     scan = inspect_pdf_layout(pdf)
     assets = create_layout_review_assets(pdf, work / "layout", scan["detailed_pages"])
     old_calls = math.ceil(scan["pages_checked"] / 4)
-    new_calls = math.ceil(len(assets["overview"]) / 2) + math.ceil(len(assets["detail"]) / 4)
+    new_calls = math.ceil(len(assets["overview"]) / 4) + math.ceil(len(assets["detail"]) / 4)
     return {"pages": scan["pages_checked"], "old_visual_review_calls": old_calls,
             "new_visual_review_calls": new_calls, "overview_sheets": len(assets["overview"]),
             "full_resolution_pages": len(assets["detail"]),
@@ -81,6 +83,19 @@ def main():
     compact = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
     result["schema_serialization"] = {"normal_chars": len(normal), "compact_chars": len(compact),
                                       "change_percent": round((len(compact) / len(normal) - 1) * 100, 2)}
+    _, sample_lesson = demo_content()
+    sample_patch = LessonPatch(base_sha256=lesson_sha256(sample_lesson), operations=[{
+        "op": "replace", "path": "/sections/0/paragraphs/0",
+        "value": sample_lesson.sections[0].paragraphs[0] + " Correzione mirata.",
+        "reason": "Esempio riproducibile di revisione locale."}])
+    lesson_chars = len(json.dumps(sample_lesson.model_dump(mode="json"), ensure_ascii=False,
+                                  separators=(",", ":")))
+    patch_chars = len(json.dumps(sample_patch.model_dump(mode="json"), ensure_ascii=False,
+                                 separators=(",", ":")))
+    result["incremental_revision"] = {
+        "full_lesson_chars": lesson_chars, "patch_chars": patch_chars,
+        "change_percent": round((patch_chars / lesson_chars - 1) * 100, 2),
+    }
     result["notes"] = [
         "Pixel e byte misurano il payload locale; i token immagine effettivi dipendono dal provider.",
         "Le panoramiche coprono tutte le pagine; i controlli locali e le pagine a rischio restano a piena risoluzione.",
