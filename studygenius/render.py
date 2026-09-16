@@ -366,7 +366,17 @@ def latex_failure_detail(folder: Path, stdout: str) -> str:
     return diagnostic[-3500:]
 
 
-def compile_tex(folder: Path) -> dict:
+def compile_tex(folder: Path, max_passes: int = 4) -> dict:
+    """Compile a trusted TeX document atomically.
+
+    Final books use up to four passes so the table of contents and references
+    converge.  A chapter preview has no cross-document references and can use a
+    single pass: it still exercises the exact same TeX engine, packages, lesson
+    body and vector assets, but avoids repeating the most expensive local check
+    before every model review.
+    """
+    if not 1 <= max_passes <= 4:
+        raise ValueError("Il numero di passaggi LaTeX deve essere compreso tra 1 e 4")
     engine = latex_engine()
     if not engine:
         raise LatexError("Manca LaTeX: installa MiKTeX (Windows) o TeX Live con XeLaTeX. Vedi README.")
@@ -392,7 +402,7 @@ def compile_tex(folder: Path) -> dict:
             env.pop(name)
     try:
         previous_signature = None
-        for pass_index in range(4):
+        for pass_index in range(max_passes):
             try:
                 done = subprocess.run([engine, "-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error",
                                        "-file-line-error", "dispensa.tex"],
@@ -487,7 +497,7 @@ def source_visual_box(source: SourceVisual) -> str:
 
 def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson], visual_assets: dict,
                topic_refs: dict, documents: list[dict], report: dict, mode="live",
-               output_profile="study") -> dict:
+               output_profile="study", fast_preview=False) -> dict:
     folder.mkdir(parents=True, exist_ok=True)
     template = (Path(__file__).parent / "templates" / "book.tex").read_text(encoding="utf-8")
     flags = report.get("issues", [])
@@ -501,20 +511,26 @@ def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson
                        "Segui il testo nell'ordine proposto e usa sintesi e domande per distinguere i nuclei dalle integrazioni."),
     }
     profile_title, profile_promise, study_method = profile_copy.get(output_profile, profile_copy["study"])
-    parts = [r"\begin{titlepage}\sffamily", r"{\color{accent}\Large STUDYGENIUS}\par",
-             r"\vspace{20mm}{\Huge\bfseries\raggedright\hyphenpenalty=10000\exhyphenpenalty=10000 " + escape(title) + r"\par}",
-             r"\vspace{8mm}{\Large " + escape(profile_title) + r"}\par",
-             r"\vspace{16mm}\begin{tcolorbox}[colback=light,colframe=accent,title=" + escape(status) + "]",
-             profile_promise,
-             r"\end{tcolorbox}\vfill",
-             r"\textbf{Metodo di lettura}\par " + rich(study_method) + r"\par\medskip",
-             "Le revisioni automatiche aiutano a individuare errori e omissioni, ma non certificano la correttezza scientifica né il superamento dell'esame. Confronta il programma ufficiale e i punti segnalati con il docente.",
-             r"\end{titlepage}\tableofcontents\clearpage",
-             r"\chapter*{Prima di iniziare}\addcontentsline{toc}{chapter}{Prima di iniziare}"]
-    if mode == "demo":
-        parts.append("Questo documento usa contenuti dimostrativi prestabiliti. Non è stato scritto o revisionato da chiamate API live. I consumi della dimostrazione sono zero.")
-    parts.append("I riferimenti D001, D002, ecc. identificano i documenti elencati in appendice. I numeri di pagina indicano le pagine fisiche del PDF caricato, a partire da 1.")
-    if flags:
+    if fast_preview:
+        # Only model-authored material and its assets need recompilation here.
+        # Front matter and appendices are deterministic renderer output and are
+        # checked during the full final build.
+        parts = [r"\chapter*{" + heading(title) + "}"]
+    else:
+        parts = [r"\begin{titlepage}\sffamily", r"{\color{accent}\Large STUDYGENIUS}\par",
+                 r"\vspace{20mm}{\Huge\bfseries\raggedright\hyphenpenalty=10000\exhyphenpenalty=10000 " + escape(title) + r"\par}",
+                 r"\vspace{8mm}{\Large " + escape(profile_title) + r"}\par",
+                 r"\vspace{16mm}\begin{tcolorbox}[colback=light,colframe=accent,title=" + escape(status) + "]",
+                 profile_promise,
+                 r"\end{tcolorbox}\vfill",
+                 r"\textbf{Metodo di lettura}\par " + rich(study_method) + r"\par\medskip",
+                 "Le revisioni automatiche aiutano a individuare errori e omissioni, ma non certificano la correttezza scientifica né il superamento dell'esame. Confronta il programma ufficiale e i punti segnalati con il docente.",
+                 r"\end{titlepage}\tableofcontents\clearpage",
+                 r"\chapter*{Prima di iniziare}\addcontentsline{toc}{chapter}{Prima di iniziare}"]
+        if mode == "demo":
+            parts.append("Questo documento usa contenuti dimostrativi prestabiliti. Non è stato scritto o revisionato da chiamate API live. I consumi della dimostrazione sono zero.")
+        parts.append("I riferimenti D001, D002, ecc. identificano i documenti elencati in appendice. I numeri di pagina indicano le pagine fisiche del PDF caricato, a partire da 1.")
+    if flags and not fast_preview:
         visible_flags = list(flags)
         if output_profile == "summary" and len(visible_flags) > 12:
             hidden = len(visible_flags) - 12
@@ -596,26 +612,27 @@ def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson
         parts.extend([r"\section*{Cosa devi saper fare}", bullets(lesson.recap)])
         if lesson.uncertainties and not all(any(u in str(flag) for flag in flags) for u in lesson.uncertainties):
             parts.extend([r"\paragraph{Dubbi da chiarire}", bullets(lesson.uncertainties)])
-    recalled = [lesson for lesson in lessons if lesson.recall]
-    if output_profile != "summary" and recalled:
-        parts.extend([r"\appendix\chapter{Risposte al richiamo attivo}"])
-        for lesson in recalled:
-            parts.extend([r"\section{" + heading(lesson.title) + "}",
-                          bullets([q.answer for q in lesson.recall], True)])
-    else:
-        parts.append(r"\appendix")
-    parts.extend([r"\chapter{Fonti e tracciabilità}"])
-    for index, document in enumerate(documents, 1):
-        parts.extend([r"\section*{D" + f"{index:03d}" + " - " + escape(document["filename"]) + "}",
-                      f"Pagine: {document['pages']}. Impronta SHA-256:" + r"\par{\small\ttfamily " +
-                      "\\allowbreak{}".join(document["sha256"][n:n+8] for n in range(0,64,8)) + "}\\par\n\n"])
-    parts.append("Il rapporto di qualità e i file strutturati nel pacchetto sorgente consentono di risalire da ogni argomento alla pagina originale. Le eventuali pagine escluse sono motivate nel rapporto.")
+    if not fast_preview:
+        recalled = [lesson for lesson in lessons if lesson.recall]
+        if output_profile != "summary" and recalled:
+            parts.extend([r"\appendix\chapter{Risposte al richiamo attivo}"])
+            for lesson in recalled:
+                parts.extend([r"\section{" + heading(lesson.title) + "}",
+                              bullets([q.answer for q in lesson.recall], True)])
+        else:
+            parts.append(r"\appendix")
+        parts.extend([r"\chapter{Fonti e tracciabilità}"])
+        for index, document in enumerate(documents, 1):
+            parts.extend([r"\section*{D" + f"{index:03d}" + " - " + escape(document["filename"]) + "}",
+                          f"Pagine: {document['pages']}. Impronta SHA-256:" + r"\par{\small\ttfamily " +
+                          "\\allowbreak{}".join(document["sha256"][n:n+8] for n in range(0,64,8)) + "}\\par\n\n"])
+        parts.append("Il rapporto di qualità e i file strutturati nel pacchetto sorgente consentono di risalire da ogni argomento alla pagina originale. Le eventuali pagine escluse sono motivate nel rapporto.")
     tex = template.replace("%%CONTENT%%", "\n".join(parts))
     (folder / "dispensa.tex").write_text(tex, encoding="utf-8")
-    diagnostics = compile_tex(folder)
+    diagnostics = compile_tex(folder, 1) if fast_preview else compile_tex(folder)
     with fitz.open(folder / "dispensa.pdf") as pdf:
         diagnostics["pages"] = len(pdf)
-        if len(pdf) < 2:
+        if len(pdf) < (1 if fast_preview else 2):
             raise LatexError("Il documento compilato è incompleto")
         diagnostics["empty_pages"] = [i+1 for i, p in enumerate(pdf) if len(p.get_text().strip()) < 3 and not p.get_images()]
     return diagnostics

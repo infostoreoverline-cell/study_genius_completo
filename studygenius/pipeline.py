@@ -339,6 +339,8 @@ class Pipeline:
                 await self.models.close()
 
     async def _run(self):
+        run_started = time.perf_counter()
+        runtime = Counter()
         self.progress("Lettura dei PDF", 0.02, "Verifico e indicizzo ogni pagina dei documenti.")
         if self.options.mode == "demo":
             from .demo import run_demo
@@ -347,10 +349,14 @@ class Pipeline:
         if not self.settings.gemini_key.get_secret_value() or not self.settings.deepseek_key.get_secret_value():
             raise ValueError("Configura entrambe le chiavi API prima di avviare il lavoro.")
         self.progress("Verifica dell'installazione LaTeX", 0.01)
+        phase_started = time.perf_counter()
         await asyncio.to_thread(preflight_latex, self.directory / "preflight")
+        runtime["preflight_seconds"] += time.perf_counter() - phase_started
         self.check()
+        phase_started = time.perf_counter()
         pages = await asyncio.to_thread(ingest, self.directory, self.check,
                                        lambda a, b: self.progress(f"Indicizzazione {a}/{b}", 0.02 + 0.06*a/b))
+        runtime["pdf_ingest_seconds"] += time.perf_counter() - phase_started
         evidence = []
         vision_manifest = read_json(self.directory / "vision.json") if (self.directory / "vision.json").exists() else {}
         page_groups = list(adaptive_page_groups(pages, vision_manifest, self.options.pages_per_batch))
@@ -406,8 +412,10 @@ class Pipeline:
             return result
 
         self.progress("Lettura multimodale parallela", 0.08)
+        phase_started = time.perf_counter()
         batches = await self.parallel_map(page_groups, self.settings.gemini_concurrency, read_batch,
             lambda done, total: self.progress(f"Gemini legge le pagine · {done}/{total}", 0.08 + 0.22*done/total))
+        runtime["multimodal_read_seconds"] += time.perf_counter() - phase_started
         for result in batches:
             evidence.extend(result.pages)
         # Restore original page order even when the model returned pages in a different order.
@@ -432,9 +440,11 @@ class Pipeline:
             f"circa {self.editorial_policy.target_chapters} capitoli e {self.editorial_policy.target_words} parole; "
             f"{len(visuals)}/{len(detected_visuals)} figure selezionate.")
         outline_file = self.directory / "outline.json"
-        if outline_file.exists():
-            plans = [ChapterPlan.model_validate(x) for x in read_json(outline_file)]
-        else:
+        guide_file = self.directory / "course-guide.json"
+
+        async def prepare_outline():
+            if outline_file.exists():
+                return [ChapterPlan.model_validate(x) for x in read_json(outline_file)]
             plans = []
             units, unit_members = cluster_topic_inventory(topics)
             inventories = [{"id": unit["id"], "title": unit["title"], "kind": unit["kind"],
@@ -463,16 +473,11 @@ class Pipeline:
                         plans.append(ChapterPlan(title=title[:180], topic_ids=group,
                                                  objectives=plan.objectives, prerequisites=plan.prerequisites))
             atomic_json(outline_file, [p.model_dump() for p in plans])
-        if Counter(t for p in plans for t in p.topic_ids) != Counter(topics.keys()):
-            raise ValueError("Il checkpoint dell'indice non copre gli argomenti estratti")
-        self.chapter_budgets = allocate_chapter_budgets(self.editorial_policy, plans)
-        topic_units, _ = cluster_topic_inventory(topics)
-        self.topic_clusters = topic_units
-        self.progress("Allineamento delle convenzioni tra capitoli", 0.33)
-        guide_file = self.directory / "course-guide.json"
-        if guide_file.exists():
-            self.course_guide = CourseGuide.model_validate(read_json(guide_file))
-        else:
+            return plans
+
+        async def prepare_course_guide():
+            if guide_file.exists():
+                return CourseGuide.model_validate(read_json(guide_file))
             guide_groups = list(bounded_groups(list(topics.items()), 100, 80000))
 
             async def guide_batch(index, batch):
@@ -486,11 +491,36 @@ class Pipeline:
                 # Merge compact extraction summaries, preserving conflicts explicitly.
                 if len(json.dumps(merged)) > 180000:
                     raise ValueError("Le convenzioni del corso superano il contesto: separa i corsi in progetti distinti.")
-                self.course_guide = await self.models.json("gemini", "Sintesi delle convenzioni", prompts.GUIDE,
+                guide = await self.models.json("gemini", "Sintesi delle convenzioni", prompts.GUIDE,
                     compact_json(merged), CourseGuide, max_output=10000)
             else:
-                self.course_guide = CourseGuide.model_validate(merged)
-            atomic_json(guide_file, self.course_guide.model_dump())
+                guide = CourseGuide.model_validate(merged)
+            atomic_json(guide_file, guide.model_dump())
+            return guide
+
+        # Planning uses DeepSeek while convention extraction uses Gemini. Running
+        # them together shortens the critical path without increasing either
+        # provider's own semaphore or weakening a validation step.
+        self.progress("Indice e convenzioni in parallelo", 0.32)
+        phase_started = time.perf_counter()
+        # Cancel the sibling deterministically if one provider fails; preserving
+        # the original exception type keeps the UI error actionable.
+        outline_task = asyncio.create_task(prepare_outline())
+        guide_task = asyncio.create_task(prepare_course_guide())
+        try:
+            await asyncio.gather(outline_task, guide_task)
+        except BaseException:
+            outline_task.cancel()
+            guide_task.cancel()
+            await asyncio.gather(outline_task, guide_task, return_exceptions=True)
+            raise
+        plans, self.course_guide = outline_task.result(), guide_task.result()
+        runtime["outline_and_guide_seconds"] += time.perf_counter() - phase_started
+        if Counter(t for p in plans for t in p.topic_ids) != Counter(topics.keys()):
+            raise ValueError("Il checkpoint dell'indice non copre gli argomenti estratti")
+        self.chapter_budgets = allocate_chapter_budgets(self.editorial_policy, plans)
+        topic_units, _ = cluster_topic_inventory(topics)
+        self.topic_clusters = topic_units
         guide_digest = hashlib.sha256(self.course_guide.model_dump_json().encode()).hexdigest()
         self.course_outline = [{"title": p.title, "topic_ids": p.topic_ids} for p in plans]
         page_map = {p.id: p for p in pages}
@@ -511,7 +541,9 @@ class Pipeline:
             return visual_id, {**asset, "title": visual.title,
                                "reference": f"{page.document}, p. {page.number}"}
 
+        phase_started = time.perf_counter()
         prepared = await self.parallel_map(list(visuals.items()), min(4, max(1, len(visuals))), prepare_visual)
+        runtime["source_vector_render_seconds"] += time.perf_counter() - phase_started
         assets.update(dict(prepared))
         documents = read_json(self.directory / "inputs.json")
 
@@ -551,13 +583,16 @@ class Pipeline:
         self.store.event(self.job_id,
             f"Mantengo attivi fino a {chapter_concurrency} capitoli indipendenti; i limiti API restano "
             f"Gemini {self.settings.gemini_concurrency} e DeepSeek {self.settings.deepseek_concurrency}.")
+        phase_started = time.perf_counter()
         chapter_results = await self.parallel_map(plans, chapter_concurrency, produce_chapter,
             lambda done, total: self.progress(f"Capitoli completati · {done}/{total}", 0.34 + 0.46*done/total))
+        runtime["chapter_pipeline_seconds"] += time.perf_counter() - phase_started
         lessons = [result[0] for result in chapter_results]
         reviews = [result[1] for result in chapter_results]
         chapter_timings = [result[2] for result in chapter_results]
         editorial_metrics = validate_book_budget(lessons, self.editorial_policy)
         self.progress("Verifica del programma d'esame", 0.81)
+        phase_started = time.perf_counter()
         audit_reviews = []
         # Hierarchical audit: an exhaustive inventory is provided in bounded batches. A final
         # syllabus audit uses all chapter titles/objectives without the lengthy source text.
@@ -589,20 +624,24 @@ class Pipeline:
         else:
             audit_reviews.append({"passed": False, "issues": [{"severity": "major", "message":
                 "Indice molto esteso: confronto globale con il programma non eseguito. Verificare la copertura manualmente."}]})
+        runtime["curriculum_audit_seconds"] += time.perf_counter() - phase_started
         report = self.report(pages, evidence, topics, visuals, plans, lessons, reviews, audit_reviews)
         report["editorial"] = editorial_metrics
         report["visual_projection"] = {"detected": len(detected_visuals),
                                        "selected": len(visuals)}
         report["performance"] = {"chapter_pipeline_concurrency": chapter_concurrency,
                                  "provider_limits_unchanged": True,
-                                 "chapters": chapter_timings}
+                                 "chapters": chapter_timings,
+                                 "phase_seconds": {}}
         report["course_guide"] = self.course_guide.model_dump()
         report["issues"].extend(self.course_guide.conflicts)
         output = self.directory / "output"
         printed_issues = list(report["issues"])
         self.progress("Composizione e compilazione LaTeX", 0.86, "Creo il PDF con testo selezionabile, formule e figure.")
+        phase_started = time.perf_counter()
         diagnostics = await asyncio.to_thread(build_book, output, self.options.title, [p.model_dump() for p in plans],
             lessons, assets, refs, documents, report, self.options.mode, self.options.output_profile)
+        runtime["final_latex_seconds"] += time.perf_counter() - phase_started
         report["layout"] = diagnostics
         self.add_layout_issues(report, diagnostics)
         self.check()
@@ -642,8 +681,10 @@ class Pipeline:
             return {"kind": kind, "files": [path.name for path in batch], "review": review}
 
         self.progress("Controllo visivo gerarchico del PDF", 0.9)
+        phase_started = time.perf_counter()
         reviewed = await self.parallel_map(review_jobs, self.settings.gemini_concurrency, review_layout,
             lambda done, total: self.progress(f"Controllo visivo · {done}/{total}", 0.9 + 0.07*done/total))
+        runtime["layout_review_seconds"] += time.perf_counter() - phase_started
         layout_reviews = []
         for item in reviewed:
             layout_review = item["review"]
@@ -659,8 +700,10 @@ class Pipeline:
                                          f"{len(layout_scan['detailed_pages'])} pagine a rischio controllate anche a piena risoluzione.")
         if report["issues"] != printed_issues:
             report["reviewed_layout"] = diagnostics
+            phase_started = time.perf_counter()
             report["layout"] = await asyncio.to_thread(build_book, output, self.options.title, [p.model_dump() for p in plans],
                 lessons, assets, refs, documents, report, self.options.mode, self.options.output_profile)
+            runtime["final_latex_seconds"] += time.perf_counter() - phase_started
             report["final_front_matter_updated"] = True
             report["layout_review_scope"] += " L'elenco iniziale dei rilievi è stato aggiornato dopo la revisione; la versione finale è ricompilata e controllata dal compilatore, senza un secondo giro visivo."
             self.add_layout_issues(report, report["layout"])
@@ -673,13 +716,19 @@ class Pipeline:
         if unseen_local_issues:
             report["issues"].extend(unseen_local_issues)
             report["issues"] = list(dict.fromkeys(report["issues"]))
+            phase_started = time.perf_counter()
             report["layout"] = await asyncio.to_thread(build_book, output, self.options.title,
                 [p.model_dump() for p in plans], lessons, assets, refs, documents, report,
                 self.options.mode, self.options.output_profile)
+            runtime["final_latex_seconds"] += time.perf_counter() - phase_started
             self.add_layout_issues(report, report["layout"])
             report["issues"] = list(dict.fromkeys(report["issues"]))
             report["final_local_layout_scan"] = await asyncio.to_thread(
                 inspect_pdf_layout, output / "dispensa.pdf")
+        report["performance"]["phase_seconds"] = {
+            key: round(value, 2) for key, value in runtime.items()
+        }
+        report["performance"]["wall_seconds"] = round(time.perf_counter() - run_started, 2)
         await self.finish(output, report, plans, lessons)
 
     async def chapter(self, index, plan, folder, topics, visuals, visual_ids, page_map, assets, refs,
@@ -859,7 +908,7 @@ class Pipeline:
                 diagnostics = await asyncio.to_thread(build_book, folder / "preview", current.title,
                     [plan.model_dump()], [current], assets, refs, documents,
                     {"issues": ["Anteprima di lavoro"]}, self.options.mode,
-                    self.options.output_profile)
+                    self.options.output_profile, True)
                 return current, diagnostics
             except LatexError as exc:
                 last_error = exc
