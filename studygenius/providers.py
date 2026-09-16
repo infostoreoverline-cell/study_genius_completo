@@ -16,7 +16,7 @@ from .config import Settings
 from .storage import Store, atomic_json, read_json
 
 T = TypeVar("T", bound=BaseModel)
-PROMPT_VERSION = "2.0.0"
+PROMPT_VERSION = "2.1.0"
 
 
 class ProviderError(RuntimeError):
@@ -78,13 +78,32 @@ class Models:
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(300, connect=20), transport=transport)
         self.cache = store.directory(job_id) / "cache"
         self.shared_cache = store.root / "model-cache"
-        self.gemini_native_schema = True
-        self.deepseek_responses_schema = True
+        # API compatibility is a property of the selected model/account, not of a
+        # single project. Remember a validated fallback so every new project does
+        # not pay for the same rejected probe again. Prompt versioning makes the
+        # choice expire naturally when the request format changes.
+        self.capability_path = store.root / "provider-capabilities.json"
+        try:
+            self.capabilities = read_json(self.capability_path) if self.capability_path.exists() else {}
+        except (OSError, ValueError, TypeError):
+            self.capabilities = {}
+        gemini_key = self._capability_key("gemini", settings.gemini_model)
+        deepseek_key = self._capability_key("deepseek", "responses-endpoint")
+        self.gemini_native_schema = self.capabilities.get(gemini_key, True)
+        self.deepseek_responses_schema = self.capabilities.get(deepseek_key, True)
         self.rate_limits = {
             "gemini": asyncio.Semaphore(settings.gemini_concurrency),
             "deepseek": asyncio.Semaphore(settings.deepseek_concurrency),
         }
         self.cache_stats = {"job_hits": 0, "shared_hits": 0, "pending_hits": 0, "writes": 0}
+
+    @staticmethod
+    def _capability_key(provider: str, model: str) -> str:
+        return f"{PROMPT_VERSION}:{provider}:{model}"
+
+    def remember_capability(self, provider: str, model: str, supported: bool):
+        self.capabilities[self._capability_key(provider, model)] = supported
+        atomic_json(self.capability_path, self.capabilities)
 
     async def close(self):
         await self.client.aclose()
@@ -250,6 +269,7 @@ class Models:
                 # Some serving versions reject valid but complex schemas. Keep JSON mode,
                 # include the full contract in the prompt, and retain identical local validation.
                 self.gemini_native_schema = False
+                self.remember_capability("gemini", model, False)
                 self.store.event(self.job_id, f"{task}: adatto il formato della richiesta per questo modello.")
                 continue
             if (provider == "deepseek" and response.status_code in (400, 404, 422)
@@ -257,6 +277,7 @@ class Models:
                 # Older accounts/endpoints may expose only Chat Completions. Fall back
                 # once, retain local Pydantic validation, and reuse that capability choice.
                 self.deepseek_responses_schema = False
+                self.remember_capability("deepseek", "responses-endpoint", False)
                 self.store.event(self.job_id, f"{task}: endpoint Structured Outputs non disponibile; uso JSON validato localmente.")
                 continue
             if response.status_code in (408, 429, 500, 502, 503, 504):

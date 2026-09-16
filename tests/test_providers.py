@@ -185,6 +185,33 @@ async def test_gemini_schema_rejection_uses_json_mode_with_full_local_contract(t
         await models.close()
 
 
+async def test_gemini_schema_fallback_is_remembered_for_later_projects(tmp_path):
+    bodies=[]
+    def handler(request):
+        body=json.loads(request.content); bodies.append(body)
+        if len(bodies)==1:
+            return httpx.Response(400,json={"error":{"message":"Request contains an invalid argument."}})
+        return response("gemini")
+    store=Store(tmp_path)
+    settings=Settings(gemini_key="GEMINI_TEST_ONLY",deepseek_key="DEEPSEEK_TEST_ONLY")
+    first_job=store.create(JobOptions().model_dump())
+    first=Models(settings,store,first_job,lambda:None,httpx.MockTransport(handler))
+    try:
+        assert (await first.json("gemini","test","JSON","first",Answer)).answer=="ok"
+    finally:
+        await first.close()
+    second_job=store.create(JobOptions().model_dump())
+    second=Models(settings,store,second_job,lambda:None,httpx.MockTransport(handler))
+    try:
+        assert (await second.json("gemini","test","JSON","second",Answer)).answer=="ok"
+        assert len(bodies)==3
+        assert "responseJsonSchema" in bodies[0]["generationConfig"]
+        assert all("responseJsonSchema" not in body["generationConfig"] for body in bodies[1:])
+        assert store.usage(second_job)["calls"]==1
+    finally:
+        await second.close()
+
+
 async def test_deepseek_structured_output_falls_back_once_to_chat_json(tmp_path):
     bodies=[]
     def handler(request):
@@ -201,3 +228,28 @@ async def test_deepseek_structured_output_falls_back_once_to_chat_json(tmp_path)
         assert store.usage(job)["calls"]==2
     finally:
         await models.close()
+
+
+async def test_deepseek_endpoint_fallback_is_remembered_for_later_projects(tmp_path):
+    paths=[]
+    def handler(request):
+        paths.append(request.url.path)
+        if len(paths)==1:
+            return httpx.Response(404)
+        return response("deepseek-chat")
+    store=Store(tmp_path)
+    settings=Settings(gemini_key="GEMINI_TEST_ONLY",deepseek_key="DEEPSEEK_TEST_ONLY")
+    first_job=store.create(JobOptions().model_dump())
+    first=Models(settings,store,first_job,lambda:None,httpx.MockTransport(handler))
+    try:
+        assert (await first.json("deepseek","test","JSON","first",Answer)).answer=="ok"
+    finally:
+        await first.close()
+    second_job=store.create(JobOptions().model_dump())
+    second=Models(settings,store,second_job,lambda:None,httpx.MockTransport(handler))
+    try:
+        assert (await second.json("deepseek","test","JSON","second",Answer)).answer=="ok"
+        assert paths==["/responses","/chat/completions","/chat/completions"]
+        assert store.usage(second_job)["calls"]==1
+    finally:
+        await second.close()

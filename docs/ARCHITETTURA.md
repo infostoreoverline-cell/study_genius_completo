@@ -64,6 +64,8 @@ Ogni richiesta è prenotata in una transazione SQLite **prima** dell'invio. I re
 
 Le risposte valide vengono memorizzate prima di applicare una pausa richiesta durante la chiamata. La chiave di cache include versione del protocollo, provider, modello, prompt, schema e impronte delle immagini. Esistono una cache per progetto e una cache condivisa locale, entrambe rivalidate. I prefissi comuni precedono il contenuto variabile per favorire le cache native dei provider. Una risposta troncata non viene accettata come documento valido. I tentativi di riparazione del JSON e di aumento dell'output sono limitati.
 
+La finestra di lavoro dei capitoli è distinta dai limiti API: con i valori predefiniti possono avanzare fino a quattro capitoli tra scrittura, compilazione e review, ma i semafori continuano ad ammettere al massimo due richieste Gemini e due DeepSeek. La compatibilità degli endpoint strutturati viene ricordata localmente per versione e modello; il fallback conserva la validazione completa e non viene riprovato inutilmente a ogni nuovo progetto.
+
 I checkpoint di lettura, le bozze, le patch, le revisioni intermedie e i capitoli completati sono riutilizzati quando si riprende. Ogni bozza viene rivalidata contro argomenti, figure e mappe prima dell'uso. Le revisioni scientifiche modificano il minimo sottoalbero JSON necessario e vengono poi rivalidate come lezioni complete. Per rigenerare anche i capitoli già completati con un diverso modello o protocollo bisogna creare un nuovo progetto.
 
 ## LaTeX e dati non fidati
@@ -82,6 +84,7 @@ Il progetto locale conserva:
 .studygenius/
   studygenius.sqlite3
   private-settings.json       # solo con salvataggio esplicito delle chiavi
+  provider-capabilities.json  # compatibilità API, nessuna chiave o risposta
   jobs/<id>/
     inputs/                   # PDF originali
     inputs.json               # nomi, pagine, impronte

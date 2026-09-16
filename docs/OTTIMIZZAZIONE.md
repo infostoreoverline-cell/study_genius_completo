@@ -1,4 +1,4 @@
-# Refactoring prestazioni, visuali e prompt · StudyGenius 1.2
+# Refactoring prestazioni, visuali e prompt · StudyGenius 1.3
 
 ## Obiettivo misurabile
 
@@ -13,6 +13,9 @@ Il refactoring riduce pixel inviati, contesti ripetuti, chiamate di revisione e 
 | Prompt percepiti come protocollo meccanico | Brief editoriali narrativi: missione, lettore, priorità e criteri di giudizio; lo schema resta separato | Migliore libertà didattica senza ripetere il contratto nella prosa | Sicurezza, provenienza e copertura restano controlli deterministici nel codice |
 | Mappe concettuali assenti o affidate a SVG libero | Blueprint validato di nodi/archi + renderer locale deterministico | SVG/PDF/PNG coerenti, versionabili e leggibili in A4; nessun codice visuale del modello viene eseguito | ID unici, archi validi, nodi connessi, topic del capitolo e review multimodale |
 | Review finale del PDF ancora frammentata | Fino a 4 panoramiche per chiamata, dettagli separati solo per pagine a rischio | Sul PDF Carnot di 59 pagine: 5 chiamate previste invece di 15 nel baseline (−66,67%) | Tutte le pagine restano coperte dalle panoramiche e dal controllo geometrico locale |
+| Capitoli bloccati sul limite del solo autore | Finestra end-to-end pari alla somma delle concorrenze dei provider, con tetto 8 | Con i default, fino a 4 capitoli avanzano tra scrittura, compilazione e review invece di 2 | I semafori Gemini e DeepSeek restano separati e invariati; ordine e checkpoint sono deterministici |
+| Prova di compatibilità ripetuta a ogni progetto | Capacità Structured Outputs memorizzata per versione e modello | Evita una chiamata rifiutata per provider nei progetti successivi | Il fallback conserva schema nel prompt e validazione Pydantic locale completa |
+| Run lunghi difficili da diagnosticare | Durata totale e tempi DeepSeek, LaTeX, rendering e Gemini per capitolo | Il collo di bottiglia successivo è visibile in `qualita.json` e nel diario | La telemetria non contiene prompt, chiavi o risposte del modello |
 
 ## Interventi implementati
 
@@ -76,7 +79,7 @@ flowchart TD
 
 ## Configurazione
 
-I valori predefiniti sono conservativi: due richieste concorrenti per provider. Si possono modificare con `GEMINI_CONCURRENCY` e `DEEPSEEK_CONCURRENCY`, da 1 a 8. Aumentare la concorrenza riduce il tempo solo se quota e rete lo consentono; non riduce i token.
+I valori predefiniti sono conservativi: due richieste concorrenti per provider. Si possono modificare con `GEMINI_CONCURRENCY` e `DEEPSEEK_CONCURRENCY`, da 1 a 8. La finestra dei capitoli usa la somma dei due valori, con tetto 8, per sovrapporre scrittura, compilazione locale e review senza superare nessuno dei due limiti API. Aumentare la concorrenza riduce il tempo solo se quota e rete lo consentono; non riduce i token.
 
 `DEEPSEEK_FAST_MODEL` seleziona il modello economico, mentre `DEEPSEEK_MODEL` resta il modello di ragionamento. `DEEPSEEK_REASONING_EFFORT` accetta `low`, `high` o `max`. L'interfaccia espone i due modelli e lo sforzo; la concorrenza resta una scelta di installazione.
 
