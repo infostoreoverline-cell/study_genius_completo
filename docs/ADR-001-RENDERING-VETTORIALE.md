@@ -13,8 +13,8 @@ validati:
 - `SchedaAnaliticaGrafico` per assi, curve, formule, parametri e punti critici;
 - `SchedaMappa` per nodi, relazioni e percorso di lettura.
 
-Matplotlib genera i grafici e Graphviz (`dot`) genera le mappe. Il file inserito nel
-LaTeX è sempre PDF vettoriale. Una preview PNG viene generata soltanto per la review
+Matplotlib genera i grafici e Graphviz (`dot`) genera le mappe. I file inseriti nel LaTeX hanno nomi univoci `…-grafico-vettoriale.pdf` o
+`…-mappa-vettoriale.pdf` e sono sempre PDF vettoriali. Una preview PNG viene generata soltanto per la review
 multimodale e non viene pubblicata come figura finale.
 
 ## Confine di affidabilità

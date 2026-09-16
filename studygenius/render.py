@@ -327,7 +327,8 @@ def render_concept_maps(lesson: Lesson, assets: Path, prefix: str) -> list[Path]
 def render_source_visual(visual: SourceVisual, assets: Path, prefix: str) -> dict:
     """Create the publication PDF and a disposable PNG used only by Gemini review."""
     assets.mkdir(exist_ok=True, parents=True)
-    base = assets / prefix
+    suffix = "grafico-vettoriale" if visual.kind == "chart" else "mappa-vettoriale"
+    base = assets / f"{prefix}-{suffix}"
     pdf, preview = base.with_suffix(".pdf"), base.with_suffix(".png")
     if visual.kind == "chart":
         render_analytic_chart_pdf(visual.chart, pdf, preview, visual.title)
