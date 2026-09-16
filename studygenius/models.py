@@ -35,18 +35,107 @@ class Topic(Contract):
     kind: Literal["theory", "derivation", "exercise", "example", "definition"]
 
 
+class AsseGrafico(Contract):
+    label: str = Field(min_length=1, max_length=25)
+    unit: str = Field(default="", max_length=20)
+    scale: Literal["linear", "log"] = "linear"
+    minimum: float | None = None
+    maximum: float | None = None
+
+    @model_validator(mode="after")
+    def ordered_limits(self):
+        if self.minimum is not None and self.maximum is not None and self.minimum >= self.maximum:
+            raise ValueError("Il limite minimo dell'asse deve precedere il massimo")
+        return self
+
+
+class CurvaAnalitica(Contract):
+    label: str = Field(min_length=1, max_length=80)
+    formula_latex: str = Field(default="", max_length=500)
+    parameters: dict[str, float] = Field(default_factory=dict, max_length=24)
+    x: list[float] = Field(min_length=2, max_length=1000)
+    y: list[float] = Field(min_length=2, max_length=1000)
+    style: Literal["solid", "dashed", "dotted"] = "solid"
+    interpretation: str = Field(min_length=10, max_length=3000)
+
+    @model_validator(mode="after")
+    def aligned_samples(self):
+        if len(self.x) != len(self.y):
+            raise ValueError("Ogni curva deve avere lo stesso numero di coordinate x e y")
+        if self.parameters and not self.formula_latex:
+            raise ValueError("I parametri matematici richiedono una formula esplicita")
+        return self
+
+
+class PuntoCriticoGrafico(Contract):
+    label: str = Field(min_length=1, max_length=80)
+    x: float
+    y: float
+    description: str = Field(min_length=10, max_length=2000)
+
+
+class SchedaAnaliticaGrafico(Contract):
+    x_axis: AsseGrafico
+    y_axis: AsseGrafico
+    curves: list[CurvaAnalitica] = Field(min_length=1, max_length=8)
+    critical_points: list[PuntoCriticoGrafico] = Field(default_factory=list, max_length=24)
+    source_basis: Literal["equation", "tabulated_data", "qualitative"]
+    physical_chemical_meaning: str = Field(min_length=20, max_length=6000)
+    analytical_steps: list[str] = Field(min_length=1, max_length=20)
+    limitations: str = Field(min_length=10, max_length=3000)
+
+
+class NodoMappa(Contract):
+    id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+    label: str = Field(min_length=1, max_length=90)
+    detail: str = Field(default="", max_length=180)
+    kind: Literal["concept", "law", "process", "example", "warning"] = "concept"
+
+
+class ArcoMappa(Contract):
+    source: str
+    target: str
+    label: str = Field(min_length=1, max_length=70)
+    kind: Literal["leads_to", "depends_on", "contains", "contrasts", "explains"] = "leads_to"
+
+
+class SchedaMappa(Contract):
+    nodes: list[NodoMappa] = Field(min_length=3, max_length=18)
+    edges: list[ArcoMappa] = Field(min_length=2, max_length=30)
+    reading_path: list[str] = Field(min_length=2, max_length=10)
+    explanation: str = Field(min_length=20, max_length=4000)
+
+    @model_validator(mode="after")
+    def valid_graph(self):
+        node_ids = [node.id for node in self.nodes]
+        if len(node_ids) != len(set(node_ids)):
+            raise ValueError("Gli id dei nodi della mappa devono essere unici")
+        known = set(node_ids)
+        if any(edge.source not in known or edge.target not in known for edge in self.edges):
+            raise ValueError("Ogni collegamento deve riferirsi a nodi esistenti")
+        if any(edge.source == edge.target for edge in self.edges):
+            raise ValueError("Una mappa non può contenere auto-collegamenti")
+        connected = {edge.source for edge in self.edges} | {edge.target for edge in self.edges}
+        if connected != known:
+            raise ValueError("Ogni nodo della mappa deve partecipare ad almeno un collegamento")
+        return self
+
+
 class SourceVisual(Contract):
-    title: str = Field(min_length=1, max_length=250)
-    # x0, y0, x1, y1 in thousandths of the displayed page.
-    bbox: list[int] = Field(min_length=4, max_length=4)
-    description: str = Field(min_length=10, max_length=12000)
+    """A source graph represented semantically; no model-provided crop coordinates."""
+
+    title: str = Field(min_length=1, max_length=180)
+    kind: Literal["chart", "map"]
+    chart: SchedaAnaliticaGrafico | None = None
+    concept_map: SchedaMappa | None = None
     uncertainty: str = Field(default="", max_length=4000)
 
     @model_validator(mode="after")
-    def valid_box(self):
-        x0, y0, x1, y1 = self.bbox
-        if not (0 <= x0 < x1 <= 1000 and 0 <= y0 < y1 <= 1000):
-            raise ValueError("bbox deve essere [x0,y0,x1,y1] tra 0 e 1000 con area positiva")
+    def exactly_one_payload(self):
+        if self.kind == "chart" and (self.chart is None or self.concept_map is not None):
+            raise ValueError("Una figura chart richiede soltanto la scheda analitica")
+        if self.kind == "map" and (self.concept_map is None or self.chart is not None):
+            raise ValueError("Una figura map richiede soltanto la scheda mappa")
         return self
 
 

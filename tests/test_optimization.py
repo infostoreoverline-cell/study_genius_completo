@@ -127,7 +127,7 @@ def test_concept_map_renderer_emits_vector_and_review_assets(tmp_path):
     _, lesson = demo_content()
     review_images = render_concept_maps(lesson, tmp_path, "C001")
     assert len(review_images) == 1 and review_images[0].is_file()
-    assert (tmp_path / "C001-map-01.svg").read_text(encoding="utf-8").lstrip().startswith("<?xml")
+    assert (tmp_path / "C001-map-01.pdf").read_bytes().startswith(b"%PDF")
     assert (tmp_path / "C001-map-01.pdf").stat().st_size > 1000
 
 

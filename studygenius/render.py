@@ -11,14 +11,13 @@ import zipfile
 from pathlib import Path
 
 import fitz
-import matplotlib
 from PIL import Image, ImageDraw
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.patches import FancyArrowPatch
 
-from .models import Lesson
+from .models import (ArcoMappa, AsseGrafico, CurvaAnalitica, Lesson, NodoMappa,
+                     SchedaAnaliticaGrafico, SchedaMappa, SourceVisual)
+from .renderers import (graphviz_engine, render_analytic_chart_pdf,
+                        render_concept_map_pdf)
 
 MATH_COMMANDS = set(r"""frac dfrac tfrac sqrt overline underline underbrace overbrace
 vec hat bar dot ddot tilde widehat widetilde boldsymbol mathbf mathrm mathit mathcal mathbb
@@ -285,131 +284,56 @@ def plot_text(value: str) -> str:
 
 
 def render_charts(lesson: Lesson, assets: Path, prefix: str) -> list[Path]:
+    """Render author-created numeric charts as vector PDF plus review PNG."""
     assets.mkdir(exist_ok=True, parents=True)
     paths = []
-    with plt.rc_context({"font.size": 11, "axes.spines.top": False, "axes.spines.right": False,
-                         "text.parse_math": True, "svg.fonttype": "none",
-                         "axes.prop_cycle": plt.cycler(color=["#007C83", "#C44E32", "#6F4E9C", "#3E7C59", "#B07D00", "#315A8C"])}):
-        for i, chart in enumerate(lesson.charts):
-            fig, ax = plt.subplots(figsize=(7.6, 4.8), layout="constrained")
-            try:
-                for series in chart.series:
-                    if chart.kind == "line":
-                        ax.plot(series.x, series.y, label=plot_text(textwrap.fill(series.label, 34)),
-                                linewidth=2.2, marker="o" if len(series.x) <= 14 else None,
-                                markersize=4.5)
-                    else:
-                        ax.scatter(series.x, series.y, label=plot_text(textwrap.fill(series.label, 34)),
-                                   s=34, edgecolor="white", linewidth=0.5)
-                ax.set(xlabel=plot_text(textwrap.fill(chart.xlabel, 75)),
-                       ylabel=plot_text(textwrap.fill(chart.ylabel, 55)))
-                ax.set_title(plot_text(textwrap.fill(chart.title, 68)), loc="left", pad=16, weight="bold")
-                ax.grid(which="major", alpha=0.18, linewidth=0.8)
-                all_x = [value for series in chart.series for value in series.x]
-                all_y = [value for series in chart.series for value in series.y]
-                if min(all_x) < 0 < max(all_x):
-                    ax.axvline(0, color="#5F6C70", linewidth=0.8, alpha=0.5)
-                if min(all_y) < 0 < max(all_y):
-                    ax.axhline(0, color="#5F6C70", linewidth=0.8, alpha=0.5)
-                if len(chart.series) > 1 or chart.series[0].label.strip():
-                    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
-                              ncol=min(3, len(chart.series)), frameon=False)
-                base = assets / f"{prefix}-chart-{i+1:02d}"
-                for ext in ("svg", "pdf", "png"):
-                    fig.savefig(base.with_suffix("." + ext), dpi=180, bbox_inches="tight",
-                                facecolor="white", metadata={"Creator": "StudyGenius deterministic chart renderer"})
-                paths.append(base.with_suffix(".png"))
-            finally:
-                plt.close(fig)
+    for index, chart in enumerate(lesson.charts, 1):
+        card = SchedaAnaliticaGrafico(
+            x_axis=AsseGrafico(label=chart.xlabel[:25]),
+            y_axis=AsseGrafico(label=chart.ylabel[:25]),
+            curves=[CurvaAnalitica(
+                label=series.label or f"Serie {number}",
+                x=series.x, y=series.y, interpretation=chart.explanation,
+            ) for number, series in enumerate(chart.series, 1)],
+            source_basis="tabulated_data",
+            physical_chemical_meaning=(chart.explanation if len(chart.explanation) >= 20
+                                       else chart.explanation + " Interpretazione fisico-chimica."),
+            analytical_steps=[chart.provenance],
+            limitations="I segmenti collegano i dati dichiarati; non aggiungono misure assenti dalla fonte.",
+        )
+        base = assets / f"{prefix}-chart-{index:02d}"
+        render_analytic_chart_pdf(card, base.with_suffix(".pdf"), base.with_suffix(".png"), chart.title)
+        paths.append(base.with_suffix(".png"))
     return paths
-
-
-def _concept_positions(concept_map) -> dict[str, tuple[float, float]]:
-    """Deterministic compact layout following a topological reading order."""
-    order = {node.id: index for index, node in enumerate(concept_map.nodes)}
-    incoming = {node.id: 0 for node in concept_map.nodes}
-    outgoing = {node.id: [] for node in concept_map.nodes}
-    for edge in concept_map.edges:
-        incoming[edge.target] += 1
-        outgoing[edge.source].append(edge.target)
-    queue = sorted((node for node, count in incoming.items() if count == 0), key=order.get)
-    if not queue:
-        queue = [concept_map.nodes[0].id]
-    reading_order, visited = [], set()
-    while queue:
-        current = queue.pop(0)
-        if current in visited:
-            continue
-        visited.add(current)
-        reading_order.append(current)
-        for target in sorted(outgoing[current], key=order.get):
-            incoming[target] -= 1
-            if incoming[target] <= 0:
-                queue.append(target)
-    reading_order.extend(node.id for node in concept_map.nodes if node.id not in visited)
-    rows = [reading_order[start:start + 3] for start in range(0, len(reading_order), 3)]
-    positions = {}
-    total_rows = max(1, len(rows))
-    for row_index, row in enumerate(rows):
-        y = 0.82 if total_rows == 1 else 0.84 - row_index * (0.68 / (total_rows - 1))
-        xs = [column / (len(row) + 1) for column in range(1, len(row) + 1)]
-        if row_index % 2:
-            xs.reverse()
-        for x, node_id in zip(xs, row):
-            positions[node_id] = (x, y)
-    return positions
 
 
 def render_concept_maps(lesson: Lesson, assets: Path, prefix: str) -> list[Path]:
-    """Render model-authored semantics through a trusted, deterministic vector engine."""
+    """Render author-created maps with Graphviz from validated nodes and edges."""
     assets.mkdir(exist_ok=True, parents=True)
     paths = []
-    palette = {"concept": ("#EAF5F3", "#007C83"), "law": ("#EAF0FA", "#315A8C"),
-               "process": ("#F2ECF8", "#6F4E9C"), "example": ("#FFF3E5", "#B07D00"),
-               "warning": ("#FBEAE5", "#C44E32")}
-    with plt.rc_context({"font.family": "sans-serif", "svg.fonttype": "none"}):
-        for index, concept_map in enumerate(lesson.concept_maps, 1):
-            positions = _concept_positions(concept_map)
-            rows = len({round(y, 4) for _, y in positions.values()})
-            fig, ax = plt.subplots(figsize=(8.2, max(4.6, rows * 1.55)), layout="constrained")
-            try:
-                ax.set_xlim(0, 1)
-                ax.set_ylim(0, 1)
-                ax.axis("off")
-                ax.set_title(textwrap.fill(concept_map.title, 62), loc="left", fontsize=15,
-                             fontweight="bold", color="#192B34", pad=14)
-                for edge_index, edge in enumerate(concept_map.edges):
-                    start, end = positions[edge.source], positions[edge.target]
-                    same_row = abs(start[1] - end[1]) < 0.02
-                    curve = 0.18 * (1 if edge_index % 2 == 0 else -1) if same_row else 0.04
-                    arrow = FancyArrowPatch(start, end, transform=ax.transAxes,
-                                            connectionstyle=f"arc3,rad={curve}", arrowstyle="-|>",
-                                            mutation_scale=13, linewidth=1.25, color="#5F6C70",
-                                            shrinkA=36, shrinkB=36, zorder=1)
-                    ax.add_patch(arrow)
-                    middle = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
-                    ax.text(*middle, textwrap.fill(edge.label, 18), transform=ax.transAxes,
-                            ha="center", va="center", fontsize=7.5, color="#445258", zorder=2,
-                            bbox={"boxstyle": "round,pad=0.18", "facecolor": "white",
-                                  "edgecolor": "none", "alpha": 0.94})
-                for node in concept_map.nodes:
-                    fill, border = palette[node.kind]
-                    label = textwrap.fill(node.label, 20)
-                    if node.detail:
-                        label += "\n" + textwrap.fill(node.detail, 27)
-                    ax.text(*positions[node.id], label, transform=ax.transAxes,
-                            ha="center", va="center", fontsize=9.5, color="#192B34", zorder=3,
-                            fontweight="bold" if not node.detail else "normal",
-                            bbox={"boxstyle": "round,pad=0.62", "facecolor": fill,
-                                  "edgecolor": border, "linewidth": 1.35})
-                base = assets / f"{prefix}-map-{index:02d}"
-                for ext in ("svg", "pdf", "png"):
-                    fig.savefig(base.with_suffix("." + ext), dpi=180, bbox_inches="tight",
-                                facecolor="white", metadata={"Creator": "StudyGenius deterministic concept-map renderer"})
-                paths.append(base.with_suffix(".png"))
-            finally:
-                plt.close(fig)
+    for index, concept_map in enumerate(lesson.concept_maps, 1):
+        card = SchedaMappa(
+            nodes=[NodoMappa.model_validate(node.model_dump()) for node in concept_map.nodes],
+            edges=[ArcoMappa.model_validate(edge.model_dump()) for edge in concept_map.edges],
+            reading_path=concept_map.reading_path,
+            explanation=concept_map.explanation,
+        )
+        base = assets / f"{prefix}-map-{index:02d}"
+        render_concept_map_pdf(card, base.with_suffix(".pdf"), base.with_suffix(".png"), concept_map.title)
+        paths.append(base.with_suffix(".png"))
     return paths
+
+
+def render_source_visual(visual: SourceVisual, assets: Path, prefix: str) -> dict:
+    """Create the publication PDF and a disposable PNG used only by Gemini review."""
+    assets.mkdir(exist_ok=True, parents=True)
+    base = assets / prefix
+    pdf, preview = base.with_suffix(".pdf"), base.with_suffix(".png")
+    if visual.kind == "chart":
+        render_analytic_chart_pdf(visual.chart, pdf, preview, visual.title)
+    else:
+        render_concept_map_pdf(visual.concept_map, pdf, preview, visual.title)
+    return {"path": str(pdf), "review_path": str(preview), "schema": visual.model_dump(mode="json")}
 
 
 def latex_engine() -> str | None:
@@ -512,7 +436,9 @@ def compile_tex(folder: Path) -> dict:
 
 
 def preflight_latex(folder: Path) -> None:
-    """Fail before spending API credit if required TeX packages/fonts cannot compile."""
+    """Fail before spending API credit if TeX or Graphviz is unavailable."""
+    if not graphviz_engine():
+        raise LatexError("Manca Graphviz: installalo e aggiungi il comando dot al PATH. Vedi README.")
     folder.mkdir(parents=True, exist_ok=True)
     template = (Path(__file__).parent / "templates" / "book.tex").read_text(encoding="utf-8")
     content = (r"\chapter*{Verifica locale}Testo italiano: perché, quantità, energia. "
@@ -522,6 +448,41 @@ def preflight_latex(folder: Path) -> None:
     if diagnostics["missing_characters"]:
         raise LatexError("L'installazione LaTeX non dispone dei glifi necessari: verifica i font.")
 
+
+
+def source_visual_box(source: SourceVisual) -> str:
+    parts = [r"\begin{tcolorbox}[breakable,colback=light,colframe=accent,title=Scomposizione analitica]"]
+    if source.kind == "chart":
+        card = source.chart
+        x_axis = card.x_axis.label + (f" ({card.x_axis.unit})" if card.x_axis.unit else "")
+        y_axis = card.y_axis.label + (f" ({card.y_axis.unit})" if card.y_axis.unit else "")
+        parts.extend([
+            r"\textbf{Significato fisico/chimico.} " + rich(card.physical_chemical_meaning),
+            r"\textbf{Assi.} " + escape(f"x: {x_axis}, scala {card.x_axis.scale}; y: {y_axis}, scala {card.y_axis.scale}."),
+        ])
+        for curve in card.curves:
+            parts.append(r"\paragraph{Curva: " + heading(curve.label) + "}")
+            if curve.formula_latex:
+                parts.append(display(curve.formula_latex))
+            if curve.parameters:
+                parts.append(r"\textbf{Parametri.} " + bullets(
+                    [f"{name} = {value:g}" for name, value in curve.parameters.items()]))
+            parts.append(rich(curve.interpretation))
+        if card.critical_points:
+            parts.extend([r"\textbf{Punti chiave.}", bullets([
+                f"{point.label}: ({point.x:g}, {point.y:g}). {point.description}"
+                for point in card.critical_points
+            ])])
+        parts.extend([r"\textbf{Passaggi analitici.}", bullets(card.analytical_steps, True),
+                      r"\textbf{Limiti.} " + rich(card.limitations)])
+    else:
+        card = source.concept_map
+        parts.extend([r"\textbf{Percorso di lettura.}", bullets(card.reading_path, True),
+                      r"\textbf{Relazioni rappresentate.} " + rich(card.explanation)])
+    if source.uncertainty:
+        parts.append(r"\textbf{Incertezza dichiarata.} " + rich(source.uncertainty))
+    parts.append(r"\end{tcolorbox}")
+    return "\n".join(parts)
 
 def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson], visual_assets: dict,
                topic_refs: dict, documents: list[dict], report: dict, mode="live") -> dict:
@@ -575,10 +536,16 @@ def build_book(folder: Path, title: str, plans: list[dict], lessons: list[Lesson
             target.parent.mkdir(exist_ok=True)
             if Path(asset["path"]).resolve() != target.resolve():
                 shutil.copy2(asset["path"], target)
-            parts.extend([r"\Needspace{14\baselineskip}\section*{Leggere la figura: " + heading(asset["title"]) + "}",
-                          r"\begin{center}\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{assets/" + name + r"}\end{center}",
-                          r"{\small Fonte originale: " + escape(asset["reference"]) + r"}\par",
-                          bullets(visual.how_to_read, True), rich(visual.meaning), bullets(visual.takeaways),
+            source = SourceVisual.model_validate(asset["schema"])
+            parts.extend([r"\Needspace{18\baselineskip}\section*{Figura vettoriale: " + heading(asset["title"]) + "}",
+                          r"\begin{figure}[htbp]",
+                          r"\centering",
+                          r"\includegraphics[width=0.85\linewidth]{assets/" + name + r"}",
+                          r"\end{figure}",
+                          r"{\small Ricostruzione vettoriale dalla fonte: " + escape(asset["reference"]) + r"}\par",
+                          source_visual_box(source),
+                          r"\paragraph{Come leggerla}", bullets(visual.how_to_read, True),
+                          rich(visual.meaning), bullets(visual.takeaways),
                           r"\paragraph{Limiti di lettura} " + rich(visual.limitations)])
         render_concept_maps(lesson, folder / "assets", prefix)
         for i, concept_map in enumerate(lesson.concept_maps, 1):

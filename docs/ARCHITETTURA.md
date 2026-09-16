@@ -13,7 +13,8 @@
 | `providers.py` | API native Gemini e DeepSeek, retry, cache e conteggi persistenti |
 | `prompts.py` | Brief editoriali umani e ruoli, versionati insieme al codice; i vincoli meccanici restano nei contratti |
 | `pipeline.py` | Orchestrazione e controlli di copertura, revisione e produzione |
-| `render.py` | Composizione LaTeX, whitelist matematica, grafici/mappe vettoriali deterministici, compilazione e controlli |
+| `render.py` | Composizione LaTeX, whitelist matematica, inserimento delle figure, compilazione e controlli |
+| `renderers/` | Matplotlib per grafici analitici e Graphviz per mappe, entrambi in PDF vettoriale nativo |
 | `demo.py` | Campione esplicito e deterministico, distinto dalla modalità live |
 
 ## Flusso dati
@@ -41,7 +42,7 @@ Un documento è identificato da `D001`; una pagina da `D001-P0001`; un argomento
 
 L'indice deve utilizzare ciascun argomento esattamente una volta. La lezione deve coprire esattamente i suoi argomenti assegnati e spiegare ciascuna figura assegnata una volta. Gli esercizi e i grafici non possono citare argomenti esterni al capitolo. La mappa di copertura è esportata nel rapporto.
 
-Le figure di una pagina condivisa tra più capitoli sono assegnate al primo capitolo pertinente. Le fonti della pagina restano disponibili ai revisori degli altri capitoli.
+Le figure ricostruibili di una pagina condivisa tra più capitoli sono assegnate al primo capitolo pertinente. Gemini non restituisce coordinate di ritaglio: produce una `SchedaAnaliticaGrafico` o una `SchedaMappa`, validate prima che i renderer locali generino il PDF vettoriale. La pagina sorgente completa resta disponibile al revisore; una preview PNG serve soltanto alla review e non viene inserita nella dispensa.
 
 ## Contesto e documenti lunghi
 
@@ -70,7 +71,7 @@ I checkpoint di lettura, le bozze, le patch, le revisioni intermedie e i capitol
 
 ## LaTeX e dati non fidati
 
-L'autore restituisce contenuti strutturati, non un preambolo LaTeX eseguibile. Il testo viene escapato, la matematica passa una whitelist di comandi e ambienti, la compilazione disabilita la shell e limita gli accessi TeX. Le chiavi non vengono passate nell'ambiente del compilatore. I grafici accettano solo serie numeriche finite. Le mappe accettano nodi e archi con ID validati e vengono impaginate dal renderer locale. Non viene usato `eval`, né viene eseguito codice Python/SVG generato dal modello.
+L'autore restituisce contenuti strutturati, non un preambolo LaTeX eseguibile. Il testo viene escapato, la matematica passa una whitelist di comandi e ambienti, la compilazione disabilita la shell e limita gli accessi TeX. Le chiavi non vengono passate nell'ambiente del compilatore. I grafici accettano solo serie numeriche finite, formule descrittive e parametri validati; nessuna formula viene valutata con `eval`. Le mappe accettano nodi e archi con ID validati e Graphviz riceve un DOT composto localmente, mai codice del modello. Il processo `dot` è avviato senza shell e con timeout. Non viene eseguito codice Python, SVG, DOT o LaTeX generato dal modello.
 
 Queste difese riducono i rischi ma **non sono una sandbox OS per file PDF ostili**: il parser PyMuPDF e il motore TeX restano software nativi. Per materiale non fidato è disponibile il container senza privilegi. Non esporre il server a utenti remoti.
 

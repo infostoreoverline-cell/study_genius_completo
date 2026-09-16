@@ -11,12 +11,12 @@ from pathlib import Path
 
 from . import prompts
 from .config import Settings
-from .ingest import crop_visual, ingest, render_high_fidelity_page
+from .ingest import ingest, render_high_fidelity_page
 from .models import (ChapterPlan, CourseGuide, EvidenceBatch, JobOptions, Lesson,
                      LessonPatch, LessonRepair, Outline, PageAnalysis, Review)
 from .providers import Models
 from .render import (LatexError, build_book, create_layout_review_assets,
-                     inspect_pdf_layout, render_charts, render_concept_maps, source_archive,
+                     inspect_pdf_layout, render_charts, render_concept_maps, render_source_visual, source_archive,
                      validate_lesson_math, preflight_latex)
 from .storage import Store, atomic_json, read_json
 from .vision import needs_high_fidelity
@@ -344,10 +344,16 @@ class Pipeline:
         async def read_batch(index, batch):
             checkpoint = self.directory / "evidence" / f"batch-{index:04d}.json"
             expected = [p.id for p in batch]
+            result = None
             if checkpoint.exists():
-                result = EvidenceBatch.model_validate(read_json(checkpoint))
-                validate_evidence(result, expected)
-            else:
+                try:
+                    result = EvidenceBatch.model_validate(read_json(checkpoint))
+                    validate_evidence(result, expected)
+                except (ValueError, KeyError):
+                    checkpoint.unlink(missing_ok=True)
+                    self.store.event(self.job_id,
+                        f"Lettura blocco {index+1}: checkpoint visivo precedente incompatibile; lo rigenero.")
+            if result is None:
                 result = await self.models.json("gemini", f"Lettura blocco {index+1}", prompts.READ,
                     compact_json({"pages": [{"page_id": p.id, "filename": p.filename, "page": p.number, "text": p.text} for p in batch]}),
                     EvidenceBatch, images=[self.directory / p.image for p in batch],
@@ -464,10 +470,10 @@ class Pipeline:
         async def prepare_visual(index, item):
             visual_id, value = item
             page = page_map[value["page_id"]]
-            target = self.directory / "visuals" / f"{visual_id}.png"
             visual = SourceVisual.model_validate({k: v for k, v in value.items() if k != "page_id"})
-            await asyncio.to_thread(crop_visual, self.directory, page, visual, target)
-            return visual_id, {"path": str(target), "title": value["title"],
+            asset = await asyncio.to_thread(
+                render_source_visual, visual, self.directory / "visuals", visual_id)
+            return visual_id, {**asset, "title": visual.title,
                                "reference": f"{page.document}, p. {page.number}"}
 
         prepared = await self.parallel_map(list(visuals.items()), min(4, max(1, len(visuals))), prepare_visual)
@@ -649,8 +655,10 @@ class Pipeline:
         # For born-digital pages, raw extracted text is cheaper and sharper than
         # resending a full-page raster. Scans stay attached; figure crops stay attached.
         raw_source_text = {page_id: getattr(page_map[page_id], "text", "") for page_id in reviewed_page_ids}
+        visual_page_ids = {visuals[visual_id]["page_id"] for visual_id in visual_ids}
         source_images = [self.directory / page_map[page_id].image for page_id in reviewed_page_ids
-                         if len(getattr(page_map[page_id], "text", "").strip()) < 160]
+                         if (len(getattr(page_map[page_id], "text", "").strip()) < 160
+                             or page_id in visual_page_ids)]
         feedback = None
         last_lesson = None
         initial_tier = chapter_model_tier(plan, topics)
@@ -731,7 +739,7 @@ class Pipeline:
                               "visuals": context["visuals"], "raw_source_text": raw_source_text,
                               "lesson": lesson.model_dump(), "latex_diagnostics": preview_diagnostics,
                               "reviewed_page_ids": reviewed_page_ids}
-            review_images = [*source_images, *[Path(assets[v]["path"]) for v in visual_ids],
+            review_images = [*source_images, *[Path(assets[v]["review_path"]) for v in visual_ids],
                              *chart_images, *map_images]
             review_file = folder / f"review-{attempt}.json"
             saved_review = None
@@ -770,15 +778,6 @@ class Pipeline:
             if review.accepted or attempt == self.options.review_rounds:
                 return lesson, review
             feedback = review.model_dump()
-            # Scientific feedback must not shrink a readable table into a whole page.
-            bad_crop = any(i.severity in ("major", "blocker") and
-                           any(word in (i.target + " " + i.message + " " + i.correction).lower()
-                               for word in ("ritagl", "crop")) for i in review.issues)
-            for visual_id in visual_ids if bad_crop else []:
-                from .models import SourceVisual
-                value = visuals[visual_id]
-                full = SourceVisual(title=value["title"], description=value["description"], bbox=[0, 0, 1000, 1000])
-                await asyncio.to_thread(crop_visual, self.directory, page_map[value["page_id"]], full, Path(assets[visual_id]["path"]))
             self.store.event(self.job_id, f"Capitolo {index+1}: DeepSeek corregge i rilievi di Gemini ({attempt+1}/{self.options.review_rounds}).")
         raise RuntimeError("Nessuna versione del capitolo completata")
 

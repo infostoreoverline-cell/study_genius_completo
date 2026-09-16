@@ -33,10 +33,15 @@ condizioni di validità, esempi e consegne complete degli esercizi. Conserva i p
 dati importanti: questa è una trascrizione scientifica organizzata, non un riassunto breve.
 Suddividi il materiale in argomenti leggibili senza spezzare un ragionamento unitario.
 
-Tratta grafici, tabelle, schemi, mappe e diagrammi come evidenze. Descrivine assi, unità,
-legende, curve e messaggio fisico; delimitali con bbox [x0,y0,x1,y1] su una pagina 0–1000,
-includendo didascalie ed etichette. Se il confine non è sicuro, preferisci un riquadro più
-ampio. Non ricavare numeri a occhio da una curva. Una copertina, una pagina bianca o un indice
+Tratta grafici e mappe come strutture semantiche, non come immagini da ritagliare. Per un
+grafico ricostruibile compila una SchedaAnaliticaGrafico: nomi sintetici degli assi (massimo
+25 caratteri), unità e scala, coordinate numeriche esplicite delle curve, formula e parametri
+quando presenti nella fonte, punti critici con coordinate e significato, passaggi analitici e
+limiti. Distingui equation, tabulated_data e qualitative: per un andamento qualitativo usa
+coordinate normalizzate e dichiaralo, senza attribuire precisione numerica. Per uno schema
+relazionale compila una SchedaMappa con nodi brevi e archi nominati. Fotografie, micrografie,
+strutture molecolari e illustrazioni non ricostruibili non diventano visuali inventate:
+descrivile nei topic e segnala ciò che resta da verificare. Non produrre bbox, SVG, DOT o codice. Una copertina, una pagina bianca o un indice
 senza contenuto può essere escluso spiegandone il motivo. Anche nome del corso, docente, anno,
 intestazioni, piè di pagina e sole informazioni organizzative sono contesto editoriale, non
 argomenti didattici autonomi: non trasformarli in topic se la pagina non insegna altro. Ogni altra pagina merita una lettura.
@@ -83,9 +88,9 @@ etichette dei passaggi devono far capire quale punto si sta risolvendo. Se la fo
 esercizi, aggiungi un caso applicativo dichiarato come generated, con dati, soluzione e
 controlli. Non scambiare i punti richiesti per il punteggio dell'esame.
 
-Per ogni visual_id assegnato insegna come leggere la figura, quale idea comunica e quali limiti
-ha. I grafici ricostruiti sono ammessi solo quando esistono dati numerici espliciti e una
-provenienza descrivibile: mai digitalizzare una curva a occhio. Quando il capitolo comprende
+Per ogni visual_id assegnato insegna come leggere la ricostruzione vettoriale, quale idea
+comunica e quali limiti ha. La scheda validata del lettore è la fonte geometrica: non inventare
+nuove coordinate, curve o relazioni e non chiedere ritagli bitmap. Quando il capitolo comprende
 più argomenti, prepara almeno una mappa concettuale che li colleghi. La mappa deve esprimere
 relazioni vere e utili, con nodi brevi, collegamenti nominati e un percorso di lettura; il
 renderer si occuperà autonomamente di SVG/PDF/PNG e dell'impaginazione.
@@ -115,8 +120,9 @@ scetticismo verso i fatti: una spiegazione plausibile non basta se non coincide 
 formule e immagini assegnate. Controlla completezza, consegne, segni, unità, ipotesi, passaggi
 matematici, risposte ai sottopunti e distinzione tra esercizi originali e creati.
 
-Valuta anche le visuali: ritagli completi, assi e legende leggibili, grafici coerenti con i
-dati e mappe concettuali semanticamente corrette, non decorative. source_visual_catalog può
+Valuta anche le visuali: confronta la pagina sorgente completa con la ricostruzione vettoriale;
+assi e legende devono essere leggibili, grafici e punti critici coerenti con dati/formule, mappe
+semanticamente corrette e senza sovrapposizioni. source_visual_catalog può
 attestare la presenza di figure non allegate al capitolo, ma non i loro dettagli. Ricorda che
 un tratto orizzontale procede a destra o sinistra, mentre il segno della pendenza riguarda la
 funzione rispetto all'ascissa.
